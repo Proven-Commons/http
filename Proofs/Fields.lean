@@ -178,6 +178,9 @@ theorem contentLength_iff (v : List UInt8) :
     Spec.Matches Spec.contentLength v ↔ v ≠ [] ∧ ∀ c ∈ v, isDigit c = true := by
   rw [Spec.contentLength, single_plus single_digit]
 
+theorem port_iff (v : List UInt8) : Spec.Matches Spec.port v ↔ ∀ c ∈ v, isDigit c = true := by
+  rw [Spec.port, single_star single_digit]
+
 /-- The shape of a field value. -/
 private def FV (v : List UInt8) : Prop :=
   (∀ x ∈ v, (isVchar x || isWs x) = true) ∧ (∀ a, v.head? = some a → isVchar a = true) ∧
