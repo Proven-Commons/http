@@ -147,4 +147,6 @@ theorem Spec.head_vectors :
       (·.1.framing) = some (.length 0) ∧
     (parseHead (Spec.ascii "CONNECT http:80 HTTP/1.1\r\nHost: http\r\n\r\n")).bind
       (·.1.framing) = some (.length 0) := by
+  simp only [Head.framing]
+  rw [Proofs.Framing.httpTargetOK_chars]
   and_intros <;> decide +kernel

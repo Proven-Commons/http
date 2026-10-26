@@ -85,6 +85,50 @@ theorem connectOK_iff (h : Head) : h.connectOK = true ↔ Spec.ConnectOK h := by
       exact .inr ⟨⟨⟨host, port, rfl, hh, hp⟩, h1⟩, h2⟩
     · exact .inl hm
 
+theorem httpTarget_eq : Grammar.httpTarget = Spec.httpTarget := rfl
+
+/-- `Grammar.httpTarget` with its two schemes as lists of characters,
+    not string literals. -/
+def httpTargetChars : Re :=
+  .seq [.alt (.seq (['h', 't', 't', 'p'].map .charCI)) (.seq (['h', 't', 't', 'p', 's'].map .charCI)),
+    .litCI "://", Grammar.hostNonEmpty, .opt (.cat (.litCI ":") Grammar.port), Grammar.pathAbempty,
+    .opt (.cat (.litCI "?") Grammar.query)]
+
+/-- `Head.httpTargetOK` with `httpTargetChars` in place of
+    `Grammar.httpTarget`. -/
+def httpTargetOKChars (h : Head) : Bool :=
+  h.method == connectName ||
+    !(httpColon.isPrefixOf (h.target.map lower) || httpsColon.isPrefixOf (h.target.map lower)) ||
+    httpTargetChars.isMatch h.target
+
+/-- `head_vectors` rewrites with this before `decide`. Matching an http
+    target compares `litCI "http"` with `litCI "https"`, and the nanoda
+    checker runs out of stack when it reads the two from string
+    literals. -/
+theorem httpTargetOK_chars : Head.httpTargetOK = httpTargetOKChars := rfl
+
+theorem httpTargetOK_iff (h : Head) : h.httpTargetOK = true ↔ Spec.HttpTargetOK h := by
+  have ec : Spec.ascii "CONNECT" = connectName := rfl
+  have e1 : Spec.ascii "http:" = httpColon := rfl
+  have e2 : Spec.ascii "https:" = httpsColon := rfl
+  unfold Head.httpTargetOK Spec.HttpTargetOK
+  rw [ec, e1, e2, ← lower_eq]
+  generalize h.method = m
+  generalize h.target.map lower = l
+  simp only [Bool.or_eq_true, beq_iff_eq, Bool.not_eq_true', Bool.eq_false_iff,
+    ne_eq, List.isPrefixOf_iff_prefix, Match.isMatch_iff, httpTarget_eq]
+  constructor
+  · rintro ((hm | hp) | ht) hm' hp'
+    · exact absurd hm hm'
+    · exact absurd hp' hp
+    · exact ht
+  · intro H
+    by_cases hm : m = connectName
+    · exact .inl (.inl hm)
+    by_cases hp : httpColon <+: l ∨ httpsColon <+: l
+    · exact .inr (H hm hp)
+    · exact .inl (.inr hp)
+
 private theorem ite_none_iff {α : Type} {c : Bool} {x : Option α} {y : α} :
     (if c = true then none else x) = some y ↔ c = false ∧ x = some y := by
   cases c <;> simp
@@ -106,8 +150,9 @@ private theorem cond_iff (h : Head) (H : List Field) :
   · rintro ⟨h1, h2, h3, h4⟩
     exact ⟨⟨⟨h1, by omega⟩, h3⟩, h4⟩
 
-private theorem connect_cond_iff (h : Head) : (!h.connectOK) = false ↔ Spec.ConnectOK h := by
-  rw [Bool.not_eq_false', connectOK_iff]
+private theorem target_cond_iff (h : Head) :
+    (!h.connectOK || !h.httpTargetOK) = false ↔ Spec.ConnectOK h ∧ Spec.HttpTargetOK h := by
+  rw [Bool.or_eq_false_iff, Bool.not_eq_false', Bool.not_eq_false', connectOK_iff, httpTargetOK_iff]
 
 theorem framing_iff (h : Head) (fr : Framing) : h.framing = some fr ↔ Spec.Accepts h fr := by
   have eh : Spec.named h "host" = h.fields.filter (·.isNamed hostName) := named_eq h "host"
@@ -116,9 +161,12 @@ theorem framing_iff (h : Head) (fr : Framing) : h.framing = some fr ↔ Spec.Acc
   have ec : Spec.named h "content-length" = h.fields.filter (·.isNamed contentLengthName) :=
     named_eq h "content-length"
   unfold Head.framing Spec.Accepts Spec.HostOK
-  rw [ite_none_iff, cond_iff, ite_none_iff, connect_cond_iff, and_assoc, eh]
+  rw [ite_none_iff, cond_iff, ite_none_iff, target_cond_iff, and_assoc, eh]
   apply and_congr_right
   intro _
+  apply and_congr_right
+  intro _
+  rw [and_assoc]
   apply and_congr_right
   intro _
   apply and_congr_right
@@ -145,7 +193,7 @@ theorem framing_te_cl (h : Head) (hte : Spec.named h "transfer-encoding" ≠ [])
   cases hf : h.framing with
   | none => rfl
   | some fr =>
-    have ⟨_, _, _, hfr⟩ := (framing_iff h fr).1 hf
+    have ⟨_, _, _, _, hfr⟩ := (framing_iff h fr).1 hf
     cases fr with
     | chunked => exact absurd hfr.2.1 hcl
     | length n => exact absurd hfr.1 hte
@@ -155,7 +203,7 @@ theorem framing_two_cl (h : Head) (h2 : 2 ≤ (Spec.named h "content-length").le
   cases hf : h.framing with
   | none => rfl
   | some fr =>
-    have ⟨_, _, _, hfr⟩ := (framing_iff h fr).1 hf
+    have ⟨_, _, _, _, hfr⟩ := (framing_iff h fr).1 hf
     cases fr with
     | chunked => rw [hfr.2.1] at h2; simp at h2
     | length n =>
