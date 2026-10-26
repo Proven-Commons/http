@@ -1,0 +1,12 @@
+{
+  "challenge_module": "Spec",
+  "solution_module": "Proofs",
+  "theorem_names": [
+    "Spec.head_vectors"
+  ],
+  "permitted_axioms": [
+    "propext",
+    "Quot.sound",
+    "Classical.choice"
+  ]
+}
