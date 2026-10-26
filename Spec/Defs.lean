@@ -132,6 +132,23 @@ status code to any HTTP/1.1 request message that lacks a Host header
 field and to any request message that contains more than one Host header
 field line or a Host header field with an invalid field value."
 
+RFC 9110, section 9.3.6: "CONNECT uses a special form of request
+target, unique to this method, consisting of only the host and port
+number of the tunnel destination, separated by a colon", and "A server
+MUST reject a CONNECT request that targets an empty or invalid port
+number". Section 9.1: "The method token is case-sensitive", so the
+method is compared as written. The RFC does not say which port numbers
+are invalid. Here a valid one is from 1 to 65535: a TCP port number is
+16 bits (RFC 9293, section 3.1), and 0 is a Reserved port number (RFC
+6335, section 6). A server need not accept CONNECT at all (section
+9.3.6: "An origin server MAY accept a CONNECT request"), so refusing
+port 0 is allowed however "invalid" is read.
+
+RFC 9110, section 5.2: when a field name is repeated, "its combined
+field value consists of the list of corresponding field line values
+within that section, concatenated in order, with each field line value
+separated by a comma".
+
 RFC 9112, section 6.3, for a request, with this library's choices where
 the RFC gives one:
 - "If a message is received with both a Transfer-Encoding and a
@@ -145,11 +162,21 @@ the RFC gives one:
   library decodes no other coding, and section 6.1 says "A server that
   receives a request message with a transfer coding it does not
   understand SHOULD respond with 501 (Not Implemented)". So
-  Transfer-Encoding is accepted only as one field line whose value is
-  `chunked`, in any case (RFC 9112, section 7: "All transfer-coding names
-  are case-insensitive"). Any other value is rejected: with chunked not
-  last, section 6.3 requires 400; otherwise it is a coding this library
-  does not understand.
+  Transfer-Encoding is accepted only when its combined field value is a
+  list of the one coding `chunked`, in any case (RFC 9112, section 7:
+  "All transfer-coding names are case-insensitive"). Transfer-Encoding
+  is `#transfer-coding` (section 6.1), and empty list elements do not
+  count (RFC 9110, section 5.6.1.2), so `chunked,` and `, chunked` are
+  such lists, and so is a `chunked` field line with an empty one. Any
+  other value is rejected:
+  - with no coding, or chunked not last, section 6.3 says "the server
+    MUST respond with the 400 (Bad Request) status code";
+  - with chunked twice, the sender broke section 6.1, "A sender MUST NOT
+    apply the chunked transfer coding more than once", and RFC 9110,
+    section 15.5.1, lets a server answer "invalid request message
+    framing" with 400;
+  - otherwise, the value names a coding this library does not
+    understand.
 - Section 6.1: "A server or client that receives an HTTP/1.0 message
   containing a Transfer-Encoding header field MUST treat the message as
   if the framing is faulty". Rejected here.
@@ -183,18 +210,30 @@ def Spec.HostOK (h : Head) : Prop :=
   (Spec.named h "host").length ≤ 1 ∧ (1 ≤ h.minor → (Spec.named h "host").length = 1) ∧
     ∀ f ∈ Spec.named h "host", Spec.Matches Spec.hostValue f.value
 
+/-- The rule of RFC 9110 section 9.3.6 for CONNECT: the target is
+    `uri-host ":" port`, with a port from 1 to 65535. An empty port
+    writes 0, so it is refused. -/
+def Spec.ConnectOK (h : Head) : Prop :=
+  h.method = Spec.ascii "CONNECT" →
+    ∃ host port, h.target = host ++ [0x3A] ++ port ∧ Spec.Matches Spec.uriHost host ∧
+      Spec.Matches Spec.port port ∧ 1 ≤ Spec.decimal port ∧ Spec.decimal port ≤ 65535
+
+/-- The combined field value of the field lines `fs` (RFC 9110, section
+    5.2): their values in order, separated by commas. -/
+def Spec.combined (fs : List Field) : List UInt8 := List.intercalate [0x2C] (fs.map (·.value))
+
 /-- The body after the head is framed as `fr`, by section 6.3 with the
     choices above. -/
 def Spec.FramedAs (h : Head) : Framing → Prop
   | .chunked =>
-    1 ≤ h.minor ∧ Spec.named h "content-length" = [] ∧
-      ∃ f, Spec.named h "transfer-encoding" = [f] ∧ f.value.map Spec.lower = Spec.ascii "chunked"
+    1 ≤ h.minor ∧ Spec.named h "content-length" = [] ∧ Spec.named h "transfer-encoding" ≠ [] ∧
+      Spec.Matches (Spec.listOne (Re.litCI "chunked")) (Spec.combined (Spec.named h "transfer-encoding"))
   | .length n =>
     Spec.named h "transfer-encoding" = [] ∧
       ((Spec.named h "content-length" = [] ∧ n = 0) ∨
         ∃ f, Spec.named h "content-length" = [f] ∧ Spec.Matches Spec.contentLength f.value ∧
           n = Spec.decimal f.value)
 
-/-- A server accepts the head, and frames its body as `fr`. -/
+/-- This library accepts the head, and frames its body as `fr`. -/
 def Spec.Accepts (h : Head) (fr : Framing) : Prop :=
-  h.major = 1 ∧ Spec.HostOK h ∧ Spec.FramedAs h fr
+  h.major = 1 ∧ Spec.HostOK h ∧ Spec.ConnectOK h ∧ Spec.FramedAs h fr

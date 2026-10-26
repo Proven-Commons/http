@@ -1,7 +1,8 @@
 /-
-  The grammar of the request target and the Host field, for the code:
-  the RFC 3986 rules that `isMatch` checks a target and a Host value
-  against. `Proofs/` shows each is the rule of the same name in
+  The grammar of the request target, the Host field and a
+  Transfer-Encoding list, for the code: the rules that `isMatch` checks
+  a target, a Host value and a Transfer-Encoding value against.
+  `Proofs/` shows each is the rule of the same name in
   `Spec/Rules.lean`.
 -/
 
@@ -147,6 +148,25 @@ def uriHost : Re := host
 
 /-- `Host = uri-host [ ":" port ]` (section 7.2) -/
 def hostValue : Re := cat uriHost (opt (cat (litCI ":") port))
+
+/-! ## RFC 9110, sections 5.6.1.2 and 5.6.3 -/
+
+/-- `SP = %x20` -/
+def SP : Re := byte 0x20
+
+/-- `HTAB = %x09 ; horizontal tab` -/
+def HTAB : Re := byte 0x09
+
+/-- `OWS = *( SP / HTAB )` (section 5.6.3) -/
+def OWS : Re := star (alt SP HTAB)
+
+/-- A list with one element, `e`, as a recipient reads a list (section
+    5.6.1.2): `*( OWS "," OWS ) element *( OWS "," OWS )`. -/
+def listOne (e : Re) : Re :=
+  seq [star (seq [OWS, litCI ",", OWS]), e, star (seq [OWS, litCI ",", OWS])]
+
+/-- A Transfer-Encoding value that lists the one coding `chunked`. -/
+def chunkedList : Re := listOne (litCI "chunked")
 
 /-! ## RFC 9112 -/
 

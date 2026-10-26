@@ -6,9 +6,9 @@
 
   The sources:
   - RFC 5234, Appendix B.1: the core rules.
-  - RFC 9110, sections 4.1, 5.1, 5.5, 5.6.2, 5.6.3, 7.2 and 8.6: tokens,
-    whitespace, field names and values, `absolute-path`, `Host` and
-    `Content-Length`.
+  - RFC 9110, sections 4.1, 5.1, 5.5, 5.6.1.2, 5.6.2, 5.6.3, 7.2 and
+    8.6: tokens, whitespace, field names and values, a list of one
+    element, `absolute-path`, `Host` and `Content-Length`.
   - RFC 3986, Appendix A: the URI rules the request target uses.
   - RFC 9112, sections 3 and 3.2: the method and the four forms of
     request target. The version, whose digits `Head` keeps as numbers,
@@ -77,6 +77,15 @@ def Spec.fieldName : Re := Spec.token
 
 /-- `Content-Length = 1*DIGIT` (section 8.6) -/
 def Spec.contentLength : Re := plus Spec.DIGIT
+
+/-- A list with one element, `e`, as a recipient reads a list (section
+    5.6.1.2): "a recipient MUST accept lists that satisfy the following
+    syntax: `#element => [ element ] *( OWS "," OWS [ element ] )`",
+    where "Empty elements do not contribute to the count of elements
+    present". With one element present and every other one empty, that
+    is `*( OWS "," OWS ) element *( OWS "," OWS )`. -/
+def Spec.listOne (e : Re) : Re :=
+  seq [star (seq [Spec.OWS, litCI ",", Spec.OWS]), e, star (seq [Spec.OWS, litCI ",", Spec.OWS])]
 
 /-! ## RFC 3986, Appendix A -/
 

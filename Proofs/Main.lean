@@ -41,9 +41,10 @@ theorem Spec.parseHead_print (h : Head) (rest : List UInt8) (hv : Spec.HeadValid
 
 /-! ## Acceptance and framing -/
 
-/-- `framing` decides which heads a server accepts, by the version, the
-    Host rule of RFC 9112 section 3.2, and section 6.3 with the choices
-    in `Spec/Defs.lean`, and how it frames the body. -/
+/-- `framing` decides which heads this library accepts, by the version,
+    the Host rule of RFC 9112 section 3.2, the CONNECT rule of RFC 9110
+    section 9.3.6, and section 6.3 with the choices in `Spec/Defs.lean`,
+    and how it frames the body. -/
 theorem Spec.framing_iff (h : Head) (fr : Framing) : h.framing = some fr ↔ Spec.Accepts h fr :=
   Proofs.Framing.framing_iff h fr
 
@@ -59,11 +60,17 @@ theorem Spec.framing_two_cl (h : Head) (h2 : 2 ≤ (Spec.named h "content-length
   Proofs.Framing.framing_two_cl h h2
 
 /-- The examples of RFC 9112 sections 3.2.1 to 3.2.4 are accepted, with
-    no body. And the classic shapes of request smuggling are rejected:
+    no body. So are Transfer-Encoding lists of the one coding `chunked`
+    with empty elements, which RFC 9110 section 5.6.1.2 says a recipient
+    must accept. The classic shapes of request smuggling are rejected:
     two Content-Length values, Content-Length with Transfer-Encoding, a
-    Transfer-Encoding value that is not exactly `chunked`, two
-    Transfer-Encoding lines, whitespace before a colon, a folded line, a
-    bare LF, a bare CR, and Transfer-Encoding in HTTP/1.0. -/
+    Transfer-Encoding value other than a list of the one coding
+    `chunked`, chunked twice, two Transfer-Encoding lines that list
+    another coding, whitespace before a colon, a folded line, a bare LF,
+    a bare CR, and Transfer-Encoding in HTTP/1.0. So are an HTTP/1.1
+    request with no Host or with two, and a CONNECT with an empty port,
+    port 0, a port above 65535, or a target that is not a host and
+    port. -/
 theorem Spec.head_vectors :
     -- Sections 3.2.1 to 3.2.4
     (parseHead (Spec.ascii "GET /where?q=now HTTP/1.1\r\nHost: www.example.org\r\n\r\n")).bind
@@ -80,6 +87,14 @@ theorem Spec.head_vectors :
       (fun p => (p.1.framing, p.2)) = some (some (.length 5), Spec.ascii "hello") ∧
     (parseHead (Spec.ascii "POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: Chunked\r\n\r\n")).bind
       (·.1.framing) = some .chunked ∧
+    -- Lists with empty elements (RFC 9110, section 5.6.1.2)
+    (parseHead (Spec.ascii "POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked,\r\n\r\n")).bind
+      (·.1.framing) = some .chunked ∧
+    (parseHead (Spec.ascii "POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: , chunked\r\n\r\n")).bind
+      (·.1.framing) = some .chunked ∧
+    (parseHead (Spec.ascii
+      "POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding:\r\n\r\n")).bind
+      (·.1.framing) = some .chunked ∧
     -- Smuggling shapes
     (parseHead (Spec.ascii
       "POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\n")).bind
@@ -91,6 +106,9 @@ theorem Spec.head_vectors :
       (·.1.framing) = none ∧
     (parseHead (Spec.ascii
       "POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked, identity\r\n\r\n")).bind
+      (·.1.framing) = none ∧
+    (parseHead (Spec.ascii
+      "POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked, chunked\r\n\r\n")).bind
       (·.1.framing) = none ∧
     (parseHead (Spec.ascii
       "POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: x\r\n\r\n")).bind
@@ -105,5 +123,12 @@ theorem Spec.head_vectors :
     -- The Host rule
     (parseHead (Spec.ascii "GET / HTTP/1.1\r\n\r\n")).bind (·.1.framing) = none ∧
     (parseHead (Spec.ascii "GET / HTTP/1.1\r\nHost: a\r\nHost: a\r\n\r\n")).bind (·.1.framing) = none ∧
-    (parseHead (Spec.ascii "GET / HTTP/1.0\r\n\r\n")).bind (·.1.framing) = some (.length 0) := by
+    (parseHead (Spec.ascii "GET / HTTP/1.0\r\n\r\n")).bind (·.1.framing) = some (.length 0) ∧
+    -- The CONNECT rule (RFC 9110, section 9.3.6)
+    (parseHead (Spec.ascii "CONNECT a: HTTP/1.1\r\nHost: a\r\n\r\n")).bind (·.1.framing) = none ∧
+    (parseHead (Spec.ascii "CONNECT a:0 HTTP/1.1\r\nHost: a\r\n\r\n")).bind (·.1.framing) = none ∧
+    (parseHead (Spec.ascii "CONNECT a:65536 HTTP/1.1\r\nHost: a\r\n\r\n")).bind (·.1.framing) = none ∧
+    (parseHead (Spec.ascii "CONNECT / HTTP/1.1\r\nHost: a\r\n\r\n")).bind (·.1.framing) = none ∧
+    (parseHead (Spec.ascii "CONNECT [::1]:65535 HTTP/1.1\r\nHost: a\r\n\r\n")).bind
+      (·.1.framing) = some (.length 0) := by
   and_intros <;> decide +kernel
