@@ -5,7 +5,7 @@
 
   reads a request from standard input and prints its head, one line for
   the request line and one for each field, then how its body is framed:
-  `length N`, `chunked`, or `reject` when a server must refuse it. It
+  `length N`, `chunked`, or `reject` when this library refuses it. It
   prints `invalid` when the input does not start with a request head of
   the grammar. It exits with 0 for a framed request and 1 otherwise.
 

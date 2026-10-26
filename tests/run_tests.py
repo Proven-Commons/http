@@ -5,26 +5,43 @@ the rules written here in Python.
 The oracle is the grammar and the rules of RFC 9112, RFC 9110 and
 RFC 3986, written in this script from the RFCs, separately from the Lean
 code and the Lean spec: regular expressions for the request line, the
-field lines and the request target, then the framing rules of RFC 9112
-section 6.3 and the Host rule of section 3.2, with the choices the Lean
-spec makes (see SPEC.md). The IPv6 rule of RFC 3986 is also checked
-against Python's `ipaddress`, as a test of the oracle itself.
+field lines and the request target, then the Host rule of RFC 9112
+section 3.2, the CONNECT rule of RFC 9110 section 9.3.6 and the framing
+rules of RFC 9112 section 6.3, with the choices the Lean spec makes (see
+SPEC.md). Transfer-Encoding is read as one list made of all its field
+lines (RFC 9110 section 5.2), in which empty elements do not count
+(section 5.6.1.2). The IPv6 rule of RFC 3986 is also checked against
+Python's `ipaddress`, as a test of the oracle itself.
 
 Inputs come from a recorded seed:
 
 - valid heads: methods, targets in all four forms (paths with
   percent-escapes and queries, URIs with user info, registered names,
-  IPv4, IPv6 in all its compressed forms, IPvFuture and ports, host and
-  port, and `*`), versions, fields with values of visible characters,
-  obs-text and inner whitespace, and Host, Content-Length and
-  Transfer-Encoding fields in many forms, some valid and some not;
+  IPv4, IPv6 in all its compressed forms, IPvFuture with `v` or `V`, and
+  ports, host and port, and `*`), versions, fields with values of
+  visible characters, obs-text and inner whitespace, and Host,
+  Content-Length and Transfer-Encoding fields in many forms, some valid
+  and some not;
+- hosts that RFC 3986 does not allow, in targets and Host values: an
+  IPv6 literal whose IPv4 tail has an octet above 255 or with a leading
+  zero, an IP literal with an RFC 6874 zone ID such as
+  `[fe80::1%25eth0]`, and an IPv6 address with no brackets;
+- CONNECT, and `connect`, which is another method, with host and port
+  targets whose port is empty, 0, above 65535, long or with leading
+  zeros, and with targets of the other three forms;
+- Transfer-Encoding lists with empty elements, such as `chunked,` and
+  `, chunked`, and heads with several Transfer-Encoding lines: all but
+  one empty or only commas, chunked in two of them, or chunked split
+  over two;
 - empty lines before the request line, and octets after the head;
 - mutations of valid heads: an octet replaced, deleted or inserted, a
   bare CR, a bare LF, a NUL, whitespace before a colon, a folded line, a
   line starting with whitespace, a tab or two spaces in the request
   line, a line repeated, the head cut short;
-- fixed cases: the examples of RFC 9112 and the classic shapes of
-  request smuggling, and malformed requests to the tool.
+- fixed cases: the examples of RFC 9112, the classic shapes of request
+  smuggling, every input of `Spec.head_vectors` in Spec.lean, the inputs
+  that the reviews of these tests named, and malformed requests to the
+  tool.
 
 It builds the executable first, writes tests/TEST-RESULTS.md, and exits
 non-zero if any input disagrees.
@@ -119,6 +136,20 @@ FIELD_LINE = re.compile(rb"(" + TOKEN + rb"):[ \t]*(" + FIELD_VALUE + rb")[ \t]*
 IPV6_RE = re.compile(IPV6)
 TARGET_RE = re.compile(REQUEST_TARGET)
 
+# RFC 9110, section 5.6.1.2: a recipient reads a list `#element` as
+# [ element ] *( OWS "," OWS [ element ] ), and "Empty elements do not
+# contribute to the count of elements present". So a list of the one
+# coding chunked has chunked once, and any number of empty elements
+# before and after it. Coding names are case-insensitive (RFC 9112,
+# section 7).
+OWS = rb"[ \t]*"
+EMPTY_ELEMENTS = rb"(?:" + OWS + rb"," + OWS + rb")*"
+CHUNKED_ALONE = re.compile(EMPTY_ELEMENTS + rb"[Cc][Hh][Uu][Nn][Kk][Ee][Dd]" + EMPTY_ELEMENTS)
+
+# RFC 9110, section 9.3.6: the target of CONNECT is the host and the port
+# of the tunnel, "separated by a colon": `uri-host ":" port`.
+CONNECT_TARGET = re.compile(rb"(?:" + HOST + rb"):(" + PORT + rb")")
+
 
 def reference(bs):
     """(method, target, major, minor, fields, rest) for the head at the
@@ -146,10 +177,34 @@ def reference(bs):
     return m.group(1), m.group(2), int(m.group(3)), int(m.group(4)), fields, bs[end + 4:]
 
 
+def connect_ok(method, target):
+    """RFC 9110, section 9.3.6: "A server MUST reject a CONNECT request
+    that targets an empty or invalid port number". The method token is
+    case-sensitive (section 9.1), so only `CONNECT` is held to this. Its
+    target must be a host and a port, and here a valid port is from 1 to
+    65535."""
+    if method != b"CONNECT":
+        return True
+    m = CONNECT_TARGET.fullmatch(target)
+    if not m:
+        return False
+    # Leading zeros do not change the number. More than five digits after
+    # them is above 65535, and int() is not given very long strings.
+    digits = m.group(1).lstrip(b"0")
+    return 1 <= len(digits) <= 5 and int(digits) <= 65535
+
+
+def combined(values):
+    """The combined field value of field lines with these values (RFC
+    9110, section 5.2): the values in order, with a comma between each."""
+    return b",".join(values)
+
+
 def framing(head):
     """How a server frames the body after the head, or None when it must
-    reject it: RFC 9112 sections 3.2 and 6.3, with the choices of SPEC.md."""
-    _, _, major, minor, fields, _ = head
+    reject it: RFC 9112 sections 3.2 and 6.3 and RFC 9110 section 9.3.6,
+    with the choices of SPEC.md."""
+    method, target, major, minor, fields, _ = head
     if major != 1:
         return None
 
@@ -161,11 +216,13 @@ def framing(head):
         return None
     if any(not HOST_FIELD.fullmatch(v) for v in hosts):
         return None
+    if not connect_ok(method, target):
+        return None
     te, cl = named(b"transfer-encoding"), named(b"content-length")
     if te and cl:
         return None
     if te:
-        if minor < 1 or len(te) != 1 or te[0].lower() != b"chunked":
+        if minor < 1 or not CHUNKED_ALONE.fullmatch(combined(te)):
             return None
         return "chunked"
     if cl:
@@ -193,7 +250,8 @@ def answer(bs):
 
 # Generators
 
-METHODS = [b"GET", b"POST", b"PUT", b"DELETE", b"HEAD", b"OPTIONS", b"CONNECT", b"PATCH", b"TRACE"]
+# CONNECT has its own targets, in valid_head().
+METHODS = [b"GET", b"POST", b"PUT", b"DELETE", b"HEAD", b"OPTIONS", b"PATCH", b"TRACE"]
 TCHARS = b"!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 UNRES = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
 SUBS = b"!$&'()*+,;="
@@ -235,10 +293,21 @@ def query(rng):
     return pchars(rng, rng.randint(0, 8), b":@/?")
 
 
-def ipv4(rng):
+# Octets that are not a dec-octet (RFC 3986, section 3.2.2): above 255,
+# or with a leading zero.
+BAD_OCTETS = [b"256", b"259", b"260", b"299", b"300", b"999", b"1000", b"00", b"01", b"099", b"000",
+              b"0255"]
+
+
+def ipv4(rng, bad=False):
+    """A dotted quad of dec-octets, or with `bad`, with one octet that is
+    not a dec-octet."""
     def octet():
         return str(rng.choice([0, 1, 9, 10, 99, 100, 199, 200, 249, 250, 255, rng.randint(0, 255)])).encode()
-    return b".".join(octet() for _ in range(4))
+    octets = [octet() for _ in range(4)]
+    if bad:
+        octets[rng.randrange(4)] = rng.choice(BAD_OCTETS)
+    return b".".join(octets)
 
 
 def h16(rng):
@@ -247,7 +316,8 @@ def h16(rng):
 
 def ipv6(rng):
     """An IPv6 address, plain or compressed with "::", sometimes with an
-    IPv4 tail, and sometimes with one group too many for "::"."""
+    IPv4 tail, and sometimes with one group too many for "::". About a
+    third of the IPv4 tails have an octet that is not a dec-octet."""
     v4 = rng.random() < 0.2
     width = 6 if v4 else 8
     if rng.random() < 0.3:
@@ -260,25 +330,69 @@ def ipv6(rng):
         s = b":".join(h16(rng) for _ in range(a)) + b"::" + b":".join(h16(rng) for _ in range(k - a))
         if v4 and not s.endswith(b":"):
             s += b":"
-    return s + ipv4(rng) if v4 else s
+    return s + ipv4(rng, rng.random() < 0.35) if v4 else s
+
+
+def zone(rng):
+    """An RFC 6874 zone ID, which RFC 3986 does not allow, after "%25" or
+    a bare "%"."""
+    zid = rng.choice([b"eth0", b"1", b"lo", b"en%30", b"x~y", pchars(rng, rng.randint(1, 4), b"")])
+    return rng.choice([b"%25", b"%25", b"%"]) + zid
 
 
 def host(rng):
+    """A host: a registered name, IPv4, an IP literal, or an empty name.
+    Some are not a host of RFC 3986: an IP literal with a zone ID, an
+    IPv6 address with no brackets, and the bad IPv4 tails of ipv6()."""
     r = rng.random()
-    if r < 0.5:
+    if r < 0.48:
         return b".".join(pchars(rng, rng.randint(1, 8), b"") for _ in range(rng.randint(1, 3)))
-    if r < 0.7:
+    if r < 0.66:
         return ipv4(rng)
-    if r < 0.9:
+    if r < 0.86:
         return b"[" + ipv6(rng) + b"]"
-    if r < 0.95:
+    if r < 0.89:
+        return b"[" + ipv6(rng) + zone(rng) + b"]"
+    if r < 0.92:
+        return ipv6(rng)
+    if r < 0.97:
         tail = b"".join(pick(rng, UNRES + SUBS + b":") for _ in range(rng.randint(1, 5)))
-        return b"[v" + h16(rng) + b"." + (tail if rng.random() < 0.8 else pchars(rng, 3)) + b"]"
+        v = rng.choice([b"v", b"V"])
+        return b"[" + v + h16(rng) + b"." + (tail if rng.random() < 0.8 else pchars(rng, 3)) + b"]"
     return b""
 
 
 def port(rng):
     return str(rng.choice([80, 443, 8080, 0, 65535, rng.randint(0, 99999)])).encode() if rng.random() < 0.9 else b""
+
+
+# Ports for CONNECT: empty, 0, the limits of 1 to 65535, leading zeros,
+# and numbers that wrap to 80 in 16, 32 or 64 bits.
+CONNECT_PORTS = [b"", b"0", b"00", b"1", b"80", b"080", b"443", b"65535", b"065535", b"65536", b"99999",
+                 b"65616", b"4294967376", b"18446744073709551696", b"000000000000000000000443"]
+
+
+def connect_port(rng):
+    r = rng.random()
+    if r < 0.5:
+        return rng.choice(CONNECT_PORTS)
+    if r < 0.8:
+        return str(rng.randint(0, 70000)).encode()
+    if r < 0.92:
+        return b"0" * rng.randint(1, 30) + str(rng.randint(0, 66000)).encode()
+    return b"".join(pick(rng, b"0123456789") for _ in range(rng.randint(6, 40)))
+
+
+def connect_target(rng):
+    """A target for CONNECT: mostly a host and a port, and sometimes
+    another form, such as a URI that also fits authority-form."""
+    r = rng.random()
+    if r < 0.75:
+        return host(rng) + b":" + connect_port(rng)
+    if r < 0.85:
+        return rng.choice([b"a:1", b"x:443", b"a:0", b"a:65536", b"a:", b"http://a:80/", b"http://a:80",
+                           b"a:b", b"a:1/", b"a:/", b"a:1?q", b"fe80::1:80", b"mailto:x@y", b"*", b"/"])
+    return target(rng)
 
 
 def target(rng):
@@ -326,13 +440,65 @@ def host_value(rng):
     if r < 0.95:
         h = host(rng)
         return h + (b":" + port(rng) if rng.random() < 0.3 else b"")
-    return rng.choice([b"a b", b"x/y", b"[::1", b"h:p", b"@x", b"%zz", b"x?"])
+    return rng.choice([b"a b", b"x/y", b"[::1", b"h:p", b"@x", b"%zz", b"x?", b"::1", b"fe80::1",
+                       b"::ffff:1.2.3.4"])
 
 
 CL_VALUES = [b"0", b"5", b"007", b"18446744073709551616", b"+5", b"-1", b"5, 5", b"5,5", b"0x5",
              b"5 5", b" ", b"", b"1e3"]
 TE_VALUES = [b"chunked", b"Chunked", b"CHUNKED", b"gzip, chunked", b"chunked, identity", b"xchunked",
              b"chunked;q=1", b"identity", b"chunked,", b",chunked", b"chunk", b"chunked chunked"]
+# Lists with empty elements (RFC 9110, section 5.6.1.2), some of the one
+# coding chunked and some not.
+TE_LISTS = [b"chunked,", b", chunked", b",chunked,", b"chunked , ,", b"chunked\t,", b",", b", ,",
+            b"chunked,,chunked", b"chunked, chunked", b"CHUNKED ,", b", ,chunked, ,", b",,", b"gzip,",
+            b", gzip, chunked", b"chunked, ,identity", b"cHuNkEd\t,\t,"]
+# Values with no element: empty, or only commas and whitespace.
+NO_ELEMENT = [b"", b"", b",", b", ,", b" , ", b",,", b"\t,"]
+
+
+def te_list(rng):
+    """A list with chunked in any case and empty elements around it, and
+    sometimes chunked twice or another coding before it."""
+    name = bytes(c ^ 0x20 if rng.random() < 0.25 else c for c in b"chunked")
+
+    def commas():
+        return b"".join(ows(rng) + b"," + ows(rng) for _ in range(rng.choice([0, 0, 1, 1, 2, 3])))
+    v = commas() + name + commas()
+    r = rng.random()
+    if r < 0.12:
+        v += b"," + ows(rng) + b"chunked"
+    elif r < 0.2:
+        v = rng.choice([b"gzip", b"identity", b"x"]) + ows(rng) + b"," + ows(rng) + v
+    return v
+
+
+def te_lines(rng):
+    """The values of the Transfer-Encoding lines of a head: one or more."""
+    r = rng.random()
+    if r < 0.3:
+        return [rng.choice(TE_VALUES) if rng.random() < 0.5 else rng.choice(TE_VALUES[:3])]
+    if r < 0.5:
+        return [te_list(rng)]
+    if r < 0.6:
+        return [rng.choice(TE_LISTS)]
+    if r < 0.78:
+        # All lines but one empty or only commas.
+        lines = [rng.choice(NO_ELEMENT) for _ in range(rng.randint(1, 3))]
+        lines.insert(rng.randint(0, len(lines)), rng.choice(TE_VALUES[:3] + [te_list(rng)]))
+        return lines
+    if r < 0.86:
+        # Two lines that both list chunked.
+        return [rng.choice(TE_VALUES[:3] + [b"chunked,"]), rng.choice(TE_VALUES[:3] + [b", chunked"])]
+    if r < 0.9:
+        # chunked split over two lines.
+        k = rng.randint(1, 6)
+        return [b"chunked"[:k], b"chunked"[k:]]
+    if r < 0.94:
+        return [rng.choice(NO_ELEMENT) for _ in range(rng.randint(1, 3))]
+    return [rng.choice(TE_VALUES), rng.choice(TE_VALUES)]
+
+
 NAMES_CASED = {b"host": [b"Host", b"host", b"HOST", b"hOsT"],
                b"content-length": [b"Content-Length", b"content-length", b"CONTENT-LENGTH"],
                b"transfer-encoding": [b"Transfer-Encoding", b"transfer-encoding", b"TRANSFER-ENCODING"]}
@@ -340,9 +506,17 @@ NAMES_CASED = {b"host": [b"Host", b"host", b"HOST", b"hOsT"],
 
 def valid_head(rng):
     """A head that fits the grammar, which the framing may still reject."""
-    method = rng.choice(METHODS) if rng.random() < 0.8 else token(rng)
+    r = rng.random()
+    if r < 0.07:
+        method, tgt = b"CONNECT", connect_target(rng)
+    elif r < 0.085:
+        # Another method: the method token is case-sensitive.
+        method, tgt = rng.choice([b"connect", b"connect", b"Connect"]), connect_target(rng)
+    else:
+        method = rng.choice(METHODS) if rng.random() < 0.8 else token(rng)
+        tgt = target(rng)
     major, minor = rng.choice([(1, 1)] * 14 + [(1, 0)] * 4 + [(1, 2), (2, 0), (0, 9), (1, 9)])
-    line = method + b" " + target(rng) + b" HTTP/" + str(major).encode() + b"." + str(minor).encode()
+    line = method + b" " + tgt + b" HTTP/" + str(major).encode() + b"." + str(minor).encode()
     fields = []
     nhost = rng.choice([1] * 16 + [0, 2])
     for _ in range(nhost):
@@ -353,9 +527,8 @@ def valid_head(rng):
             fields.append((rng.choice(NAMES_CASED[b"content-length"]),
                            rng.choice(CL_VALUES) if rng.random() < 0.25 else str(rng.randint(0, 10 ** 6)).encode()))
     elif x < 0.5:
-        for _ in range(rng.choice([1] * 6 + [2])):
-            fields.append((rng.choice(NAMES_CASED[b"transfer-encoding"]),
-                           rng.choice(TE_VALUES) if rng.random() < 0.5 else rng.choice(TE_VALUES[:3])))
+        for v in te_lines(rng):
+            fields.append((rng.choice(NAMES_CASED[b"transfer-encoding"]), v))
     elif x < 0.55:
         fields.append((rng.choice(NAMES_CASED[b"transfer-encoding"]), rng.choice(TE_VALUES)))
         fields.append((rng.choice(NAMES_CASED[b"content-length"]), rng.choice(CL_VALUES)))
@@ -421,9 +594,35 @@ FIXED = [
     b"OPTIONS * HTTP/1.1\r\nHost: www.example.org:8001\r\n\r\n",
     b"OPTIONS http://www.example.org:8001 HTTP/1.1\r\nHost: www.example.org:8001\r\n\r\n",
     b"GET /pub/WWW/ HTTP/1.1\r\nHost: www.example.org\r\n\r\n",
+    # Spec.head_vectors: a body, and chunked in any case
+    b"POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello",
+    b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: Chunked\r\n\r\n",
     # RFC 9112, section 6.1
     b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: gzip, chunked\r\n\r\n",
+    # RFC 9110, section 5.6.1.2: lists with empty elements, one line or
+    # several (section 5.2)
+    b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked,\r\n\r\n",
+    b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: , chunked\r\n\r\n",
+    b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding:\r\n\r\n",
+    b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding:\r\nTransfer-Encoding: chunked\r\n\r\n",
+    b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: ,\r\nTransfer-Encoding: Chunked\r\n"
+    b"Transfer-Encoding: , ,\r\n\r\n",
+    b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: ,chunked,\r\n\r\n",
+    b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked , ,\r\n\r\n",
+    b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\t,\r\n\r\n",
+    b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: CHUNKED ,\r\n\r\n",
+    b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: ,\r\n\r\n",
+    b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: , ,\r\n\r\n",
+    b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding:\r\n\r\n",
+    b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding:\r\nTransfer-Encoding: ,\r\n\r\n",
+    b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked,,chunked\r\n\r\n",
+    b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: chunked\r\n\r\n",
+    b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chun\r\nTransfer-Encoding: ked\r\n\r\n",
+    b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n",
+    b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked,\r\nContent-Length: 0\r\n\r\n",
+    b"POST /a HTTP/1.0\r\nTransfer-Encoding: chunked,\r\n\r\n",
     # Smuggling shapes
+    b"POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\n",
     b"POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello",
     b"POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nContent-Length: 5\r\n\r\nhello",
     b"POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 5, 5\r\n\r\nhello",
@@ -433,6 +632,7 @@ FIXED = [
     b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding:  chunked\r\n\r\n",
     b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding:\tchunked\r\n\r\n",
     b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked, identity\r\n\r\n",
+    b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked, chunked\r\n\r\n",
     b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: x\r\n\r\n",
     b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding : chunked\r\n\r\n",
     b"POST /a HTTP/1.1\r\nHost: x\r\nX: y\r\n Transfer-Encoding: chunked\r\n\r\n",
@@ -450,10 +650,32 @@ FIXED = [
     b"GET /a#frag HTTP/1.1\r\nHost: x\r\n\r\n",
     b"GET /a b HTTP/1.1\r\nHost: x\r\n\r\n",
     b"GET /%zz HTTP/1.1\r\nHost: x\r\n\r\n",
+    b"GET /%4g HTTP/1.1\r\nHost: x\r\n\r\n",
+    b"G\"ET /a HTTP/1.1\r\nHost: x\r\n\r\n",
+    b"GET /a HTTP/1.1\r\nHost: x\r\nX\"Y: z\r\n\r\n",
     b"GET http://[::1]:80/ HTTP/1.1\r\nHost: [::1]:80\r\n\r\n",
     b"GET http://[::ffff:192.0.2.1]/ HTTP/1.1\r\nHost: [::ffff:192.0.2.1]\r\n\r\n",
     b"GET http://[1::2::3]/ HTTP/1.1\r\nHost: x\r\n\r\n",
     b"GET http://[vF.a:b]/ HTTP/1.1\r\nHost: x\r\n\r\n",
+    # IP literals: IPvFuture with an upper-case V, IPv4 tails that are not
+    # four dec-octets, an RFC 6874 zone ID, and IPv6 with no brackets
+    b"GET http://[V1.a]/ HTTP/1.1\r\nHost: x\r\n\r\n",
+    b"GET / HTTP/1.1\r\nHost: [VF.a]\r\n\r\n",
+    b"GET / HTTP/1.1\r\nHost: [::1.2.3.255]\r\n\r\n",
+    b"GET / HTTP/1.1\r\nHost: [::1.2.3.256]\r\n\r\n",
+    b"GET / HTTP/1.1\r\nHost: [::1.2.3.259]\r\n\r\n",
+    b"GET / HTTP/1.1\r\nHost: [::1.2.3.260]\r\n\r\n",
+    b"GET / HTTP/1.1\r\nHost: [::1.2.3.300]\r\n\r\n",
+    b"GET / HTTP/1.1\r\nHost: [::1.2.3.1000]\r\n\r\n",
+    b"GET / HTTP/1.1\r\nHost: [::01.2.3.4]\r\n\r\n",
+    b"GET / HTTP/1.1\r\nHost: [::1.2.3.00]\r\n\r\n",
+    b"GET / HTTP/1.1\r\nHost: [::1.2.099.4]\r\n\r\n",
+    b"GET http://[::ffff:1.2.3.256]/ HTTP/1.1\r\nHost: x\r\n\r\n",
+    b"GET http://[fe80::1%25eth0]/ HTTP/1.1\r\nHost: x\r\n\r\n",
+    b"GET / HTTP/1.1\r\nHost: [fe80::1%25eth0]\r\n\r\n",
+    b"GET / HTTP/1.1\r\nHost: ::1\r\n\r\n",
+    b"GET / HTTP/1.1\r\nHost: fe80::1\r\n\r\n",
+    b"GET http://::1/ HTTP/1.1\r\nHost: x\r\n\r\n",
     # The Host rule
     b"GET / HTTP/1.1\r\n\r\n",
     b"GET / HTTP/1.1\r\nHost: a\r\nHost: a\r\n\r\n",
@@ -461,12 +683,35 @@ FIXED = [
     b"GET / HTTP/1.1\r\nHost: a b\r\n\r\n",
     b"GET / HTTP/1.0\r\n\r\n",
     b"GET / HTTP/1.0\r\nHost: a\r\nHost: b\r\n\r\n",
+    # RFC 9110, section 9.3.6: CONNECT, with the port from 1 to 65535
+    b"CONNECT a: HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"CONNECT a:0 HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"CONNECT a:00 HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"CONNECT a:65536 HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"CONNECT a:99999 HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"CONNECT a:65616 HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"CONNECT a:4294967376 HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"CONNECT a:18446744073709551696 HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"CONNECT / HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"CONNECT * HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"CONNECT http://a:80/ HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"CONNECT fe80::1:80 HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"CONNECT ::1:80 HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"CONNECT [fe80::1%25eth0]:80 HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"CONNECT [::1]:65535 HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"CONNECT a:1 HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"CONNECT a:00080 HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"CONNECT a:065535 HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"CONNECT 1.2.3.4:443 HTTP/1.0\r\n\r\n",
+    b"connect a: HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"Connect / HTTP/1.1\r\nHost: a\r\n\r\n",
     # Versions
     b"GET / HTTP/2.0\r\nHost: a\r\n\r\n",
     b"GET / HTTP/1.2\r\nHost: a\r\n\r\n",
     b"GET / http/1.1\r\nHost: a\r\n\r\n",
     b"GET / HTTP/1.10\r\nHost: a\r\n\r\n",
     b"GET / HTTP/1\r\nHost: a\r\n\r\n",
+    b"GET / HTTP/1.x\r\nHost: a\r\n\r\n",
     # Empty lines first, and a head cut short
     b"\r\n\r\nGET / HTTP/1.1\r\nHost: a\r\n\r\n",
     b"\n\r\nGET / HTTP/1.1\r\nHost: a\r\n\r\n",
@@ -511,14 +756,18 @@ def cases(seed, count):
 
 def check_ipv6_oracle(seed, n=20000):
     """The RFC 3986 IPv6 rule as written here against `ipaddress`, on
-    generated addresses and on mutations of them. Returns the count and
-    the disagreements."""
+    generated addresses and on mutations of them. Returns the count, the
+    number with an IPv4 tail that is not four dec-octets, and the
+    disagreements."""
     rng = random.Random(seed + 1)
     bad = []
+    bad_tails = 0
     for _ in range(n):
         a = ipv6(rng)
         if rng.random() < 0.4:
             a = mutate_text(rng, a)
+        tail = re.search(rb"[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$", a)
+        bad_tails += tail is not None and not re.fullmatch(IPV4, tail.group())
         ours = IPV6_RE.fullmatch(a) is not None
         try:
             ipaddress.IPv6Address(a.decode("latin-1"))
@@ -527,7 +776,7 @@ def check_ipv6_oracle(seed, n=20000):
             theirs = False
         if ours != theirs:
             bad.append(a)
-    return n, bad
+    return n, bad_tails, bad
 
 
 def mutate_text(rng, s):
@@ -633,6 +882,139 @@ def check_mode(items, limit=2000):
     return done, problems
 
 
+def outcome(want):
+    """The oracle's answer, in short: refused by the grammar, or read and
+    then accepted or rejected."""
+    if not want.startswith("OK"):
+        return "grammar"
+    return "rejected" if want.endswith("\treject") else "accepted"
+
+
+def tally(answers):
+    n = {"accepted": 0, "rejected": 0, "grammar": 0}
+    for a in answers:
+        n[a] += 1
+    return n
+
+
+# Search patterns for the counts in TEST-RESULTS.md. They look at the
+# octets of an input, so a mutated input counts when it still holds the
+# pattern.
+V4_TAIL = re.compile(rb"\[[0-9A-Fa-f:]*:([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\]")
+ZONE_ID = re.compile(rb"\[[0-9A-Fa-f:.]*:[0-9A-Fa-f:.]*%[^\]]*\]")
+UPPER_V = re.compile(rb"\[V[0-9A-Fa-f]+\.[^\]]*\]")
+
+
+def statistics(items):
+    """Lines for TEST-RESULTS.md that count how often the inputs reached
+    each form of target and each new rule."""
+    targets = {"origin": 0, "absolute": 0, "authority": 0, "both": 0, "asterisk": 0, "literal": 0}
+    connect = {"accepted": 0, "port": 0, "form": 0, "other": 0}
+    ports = {"empty": 0, "zero": 0, "big": 0, "zeros": 0}
+    other_case = {"accepted": 0, "rejected": 0}
+    te = {"lines": 0, "empty": 0, "empty chunked": 0, "several": 0, "several chunked": 0}
+    bare_host = {"accepted": 0, "rejected": 0}
+    bad_tail, zone, upper_v = [], [], []
+    for label, req, want, _ in items:
+        if label == "error":
+            continue
+        bs = bytes.fromhex(req.split(" ")[1])
+        if any(not re.fullmatch(IPV4, m.group(1)) for m in V4_TAIL.finditer(bs)):
+            bad_tail.append(outcome(want))
+        if ZONE_ID.search(bs):
+            zone.append(outcome(want))
+        if UPPER_V.search(bs):
+            upper_v.append(outcome(want))
+        head = reference(bs)
+        if head is None:
+            continue
+        method, t, _, _, fields, _ = head
+        fr = framing(head)
+        absolute = re.fullmatch(ABSOLUTE_URI, t) is not None
+        authority = re.fullmatch(AUTHORITY_FORM, t) is not None
+        if t == b"*":
+            targets["asterisk"] += 1
+        elif t.startswith(b"/"):
+            targets["origin"] += 1
+        elif absolute and authority:
+            targets["both"] += 1
+        elif absolute:
+            targets["absolute"] += 1
+        else:
+            targets["authority"] += 1
+        if b"[" in t:
+            targets["literal"] += 1
+        if method == b"CONNECT":
+            if fr:
+                connect["accepted"] += 1
+            elif connect_ok(method, t):
+                connect["other"] += 1
+            elif authority:
+                connect["port"] += 1
+            else:
+                connect["form"] += 1
+            if authority:
+                p = t.rsplit(b":", 1)[1]
+                if p == b"":
+                    ports["empty"] += 1
+                elif p.strip(b"0") == b"":
+                    ports["zero"] += 1
+                elif len(p.lstrip(b"0")) > 5 or int(p.lstrip(b"0")) > 65535:
+                    ports["big"] += 1
+                elif p.startswith(b"0"):
+                    ports["zeros"] += 1
+        elif method.upper() == b"CONNECT":
+            other_case["accepted" if fr else "rejected"] += 1
+        values = [v for k, v in fields if k.lower() == b"transfer-encoding"]
+        if values:
+            te["lines"] += 1
+            if any(e.strip(b" \t") == b"" for e in combined(values).split(b",")):
+                te["empty"] += 1
+                te["empty chunked"] += fr == "chunked"
+            if len(values) > 1:
+                te["several"] += 1
+                te["several chunked"] += fr == "chunked"
+        for k, v in fields:
+            if k.lower() == b"host" and b"[" not in v and v.count(b":") >= 2:
+                bare_host["accepted" if fr else "rejected"] += 1
+    n_connect = sum(connect.values())
+
+    def read_or_not(answers):
+        n = tally(answers)
+        return (f"{len(answers)} inputs: {n['grammar']} refused by the grammar, "
+                f"{n['rejected']} read and rejected, {n['accepted']} read and accepted")
+
+    return [
+        f"- Targets of the heads read: {targets['origin']} origin-form, {targets['absolute']} "
+        f"absolute-form only, {targets['authority']} authority-form only, {targets['both']} that "
+        f"fit both absolute-form and authority-form (such as `a:1`), {targets['asterisk']} "
+        f"asterisk-form; {targets['literal']} with an IP literal",
+        f"- Heads read with the method `CONNECT`: {n_connect}. Accepted: {connect['accepted']}. "
+        f"Against the CONNECT rule, and so rejected: {connect['port']} with a host and port "
+        f"target whose port is not from 1 to 65535, and {connect['form']} with a target of "
+        f"another form. Rejected only by another rule: {connect['other']}",
+        f"- Ports of those `CONNECT` targets that are a host and port: {ports['empty']} empty, "
+        f"{ports['zero']} zero, {ports['big']} above 65535, {ports['zeros']} from 1 to 65535 "
+        f"with leading zeros",
+        f"- Heads read with `connect` or another case of it, which is a different method: "
+        f"{sum(other_case.values())}, {other_case['accepted']} accepted, "
+        f"{other_case['rejected']} rejected",
+        f"- Heads read with Transfer-Encoding: {te['lines']}. With an empty list element in the "
+        f"combined value: {te['empty']}, {te['empty chunked']} chunked and "
+        f"{te['empty'] - te['empty chunked']} rejected. With two or more Transfer-Encoding "
+        f"lines: {te['several']}, {te['several chunked']} chunked and "
+        f"{te['several'] - te['several chunked']} rejected",
+        f"- IPv6 literals with an IPv4 tail that is not four dec-octets, anywhere in the input, "
+        f"so also in a field that is not Host: {read_or_not(bad_tail)}",
+        f"- IP literals with a zone ID (`%` inside the brackets), anywhere in the input: "
+        f"{read_or_not(zone)}",
+        f"- IPvFuture with an upper-case `V`, anywhere in the input: {read_or_not(upper_v)}",
+        f"- Host values of the heads read that hold two or more colons and no `[`, such as an "
+        f"IPv6 address with no brackets: {sum(bare_host.values())}, {bare_host['accepted']} "
+        f"in an accepted head",
+    ]
+
+
 def oracle():
     return (f"Python {platform.python_version()}: the grammar and framing rules of RFC 9112, "
             f"RFC 9110 and RFC 3986 written in this script, with its IPv6 rule checked "
@@ -679,7 +1061,7 @@ def main():
                "- Inputs: 0", "- Failures: 1 (`lake build httphead` failed)", ""])
         sys.exit("lake build httphead failed:\n" + log)
 
-    ipv6_count, ipv6_bad = check_ipv6_oracle(args.seed)
+    ipv6_count, ipv6_bad_tails, ipv6_bad = check_ipv6_oracle(args.seed)
     failures = [(f"IPv6 rule on {a!r}", "the same verdict as ipaddress", "a different one")
                 for a in ipv6_bad]
 
@@ -709,20 +1091,7 @@ def main():
     heads = [want for label, _, want, _ in items if label != "error"]
     read = [w for w in heads if w.startswith("OK")]
     frames = [w.split("\t")[3] for w in read]
-    targets = {"origin": 0, "absolute": 0, "authority": 0, "asterisk": 0, "IPv6": 0}
-    for label, req, want, _ in items:
-        if want.startswith("OK"):
-            t = reference(bytes.fromhex(req.split(" ")[1]))[1]
-            if t == b"*":
-                targets["asterisk"] += 1
-            elif t.startswith(b"/"):
-                targets["origin"] += 1
-            elif re.fullmatch(ABSOLUTE_URI, t):
-                targets["absolute"] += 1
-            else:
-                targets["authority"] += 1
-            if b"[" in t:
-                targets["IPv6"] += 1
+    stats = statistics(items)
     mutated = sum(1 for item in items if item[3])
     malformed = [g for item, g in zip(items, out) if item[0] == "error"]
 
@@ -738,13 +1107,12 @@ def main():
         f"- Mutated: {mutated} of the inputs are mutated heads",
         f"- By kind: " + ", ".join(f"{k} {v}" for k, v in sorted(by_label.items())),
         f"- Heads read: {len(read)} of {len(heads)}, and {len(heads) - len(read)} refused by the grammar",
-        f"- Targets of the heads read: {targets['origin']} origin-form, {targets['absolute']} "
-        f"absolute-form, {targets['authority']} authority-form (or both: `a:1` fits both), "
-        f"{targets['asterisk']} asterisk-form; {targets['IPv6']} with an IP literal",
         f"- Framing of the heads read: {sum(1 for f in frames if f == 'length 0')} with no body, "
         f"{sum(1 for f in frames if f.startswith('length') and f != 'length 0')} with a length, "
         f"{frames.count('chunked')} chunked, {frames.count('reject')} rejected",
-        f"- IPv6 addresses checked against `ipaddress`, to test the oracle: {ipv6_count}, "
+    ] + stats + [
+        f"- IPv6 addresses checked against `ipaddress`, to test the oracle: {ipv6_count}, of "
+        f"them {ipv6_bad_tails} with an IPv4 tail that is not four dec-octets; "
         f"{len(ipv6_bad)} disagreements",
         f"- Malformed requests answered `error`: {malformed.count('error')} of "
         f"{by_label.get('error', 0)}",
