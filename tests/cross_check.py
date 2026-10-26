@@ -244,6 +244,7 @@ OTHER_METHOD = "a method other than the registered ones"
 AUTHORITY_FORM = "the authority-form with a method other than CONNECT"
 ASTERISK_FORM = "the asterisk-form with a method other than OPTIONS"
 HTTP_NO_HOST = "an http or https target with no host"
+HTTP_USERINFO = "an http or https target with userinfo"
 NO_AUTHORITY = "an absolute-form target with no authority"
 MINOR = "HTTP/1.2 to 1.9"
 SCHEME_CHARS = "a scheme with a digit, \"+\", \"-\" or \".\""
@@ -274,19 +275,26 @@ def te_reason(te):
     return cat + (", over two or more lines" if len(te) > 1 else "")
 
 
-def http_with_no_host(target):
-    """Whether `target` is an http or https URI with no host (RFC 9110,
-    sections 4.2.1 and 4.2.2)."""
-    scheme, _, rest = target.partition(b":")
-    if scheme.lower() not in (b"http", b"https"):
-        return False
+def http_reason(method, target):
+    """Why this project rejects a target of the grammar under RFC 9110,
+    sections 4.2.1, 4.2.2 and 4.2.4, or None. The rule is for a target
+    whose scheme is http or https, in any case, with a method other than
+    CONNECT. Such a target needs "//" and a host that is not empty, and
+    its authority may not hold userinfo. With no "//" it has no host. A
+    target with userinfo and an empty host, such as `http://u@/`, is
+    counted as one with userinfo."""
+    scheme, colon, rest = target.partition(b":")
+    if method == b"CONNECT" or not colon or scheme.lower() not in (b"http", b"https"):
+        return None
     if not rest.startswith(b"//"):
-        return True
+        return HTTP_NO_HOST
     authority = re.match(rb"//([^/?#]*)", rest).group(1)
-    host = authority.rpartition(b"@")[2]
+    if b"@" in authority:
+        return HTTP_USERINFO
+    host = authority
     if not host.startswith(b"["):
         host = host.partition(b":")[0]
-    return host == b""
+    return HTTP_NO_HOST if host == b"" else None
 
 
 def target_host(method, target):
@@ -411,7 +419,12 @@ def features(bs):
         if reason:
             yield REJECTED, reason
             return
-    # RFC 9112, sections 3.2.2 to 3.2.4, and RFC 9110, sections 4.2.1 and 4.2.2
+    # RFC 9110, sections 4.2.1, 4.2.2 and 4.2.4
+    reason = http_reason(method, target)
+    if reason:
+        yield REJECTED, reason
+        return
+    # RFC 9112, sections 3.2.2 to 3.2.4
     # A CONNECT target that got this far is a host and port, read as the
     # authority-form even when it also fits absolute-URI, such as `a:1`.
     is_absolute = (method != b"CONNECT" and not target.startswith(b"/") and target != b"*"
@@ -422,9 +435,7 @@ def features(bs):
         yield ACCEPTED, ASTERISK_FORM
     if method not in REGISTERED_METHODS:
         yield ACCEPTED, OTHER_METHOD
-    if is_absolute and http_with_no_host(target):
-        yield ACCEPTED, HTTP_NO_HOST
-    elif is_absolute and not re.fullmatch(rt.SCHEME + rb"://.*", target):
+    if is_absolute and not re.fullmatch(rt.SCHEME + rb"://.*", target):
         yield ACCEPTED, NO_AUTHORITY
     if is_absolute and not re.match(rb"[A-Za-z]+:", target):
         yield ACCEPTED, SCHEME_CHARS
@@ -539,7 +550,6 @@ REPAIRS = {
     # its own feature comes first, so a parser that also wants another
     # target for GET gets the two changes together.
     OTHER_METHOD: lambda bs: change_request_line(bs, method=b"GET"),
-    HTTP_NO_HOST: lambda bs: change_request_line(bs, target=b"/"),
     NO_AUTHORITY: lambda bs: change_request_line(bs, target=b"/"),
     SCHEME_CHARS: lambda bs: change_request_line(
         bs, target=b"x:" + split_head(bs)[1].split(b" ")[1].split(b":", 1)[1]),
