@@ -39,9 +39,23 @@ def Head.connectOK (h : Head) : Bool :=
     (Grammar.authorityForm.isMatch h.target && 1 ≤ decimal (portOf h.target) &&
       decimal (portOf h.target) ≤ 65535)
 
+/-- `http:` and `https:`. -/
+def httpColon : List UInt8 := [0x68, 0x74, 0x74, 0x70, 0x3A]
+def httpsColon : List UInt8 := [0x68, 0x74, 0x74, 0x70, 0x73, 0x3A]
+
+/-- Whether the head keeps the rule of RFC 9110 sections 4.2.1, 4.2.2 and
+    4.2.4: a target whose scheme is http or https, in any case, is such a
+    URI with a host that is not empty and no userinfo. A CONNECT target
+    is a host and a port, so a CONNECT keeps it. -/
+def Head.httpTargetOK (h : Head) : Bool :=
+  h.method == connectName ||
+    !(httpColon.isPrefixOf (h.target.map lower) || httpsColon.isPrefixOf (h.target.map lower)) ||
+    Grammar.httpTarget.isMatch h.target
+
 /-- The framing of the body after the head, or `none` when this library
     refuses the request: a major version other than 1, a missing,
-    repeated or invalid Host, a CONNECT without a valid port,
+    repeated or invalid Host, a CONNECT without a valid port, an http or
+    https target with an empty host or with userinfo,
     Transfer-Encoding together with Content-Length, Transfer-Encoding in
     HTTP/1.0 or with a value other than a list of the one coding
     `chunked`, or Content-Length other than one string of digits. -/
@@ -49,7 +63,7 @@ def Head.framing (h : Head) : Option Framing :=
   let hosts := h.fields.filter (·.isNamed hostName)
   if h.major != 1 || hosts.length > 1 || (1 ≤ h.minor && hosts.length != 1) ||
       !hosts.all (fun f => Grammar.hostValue.isMatch f.value) then none
-  else if !h.connectOK then none
+  else if !h.connectOK || !h.httpTargetOK then none
   else
     match h.fields.filter (·.isNamed transferEncodingName),
         h.fields.filter (·.isNamed contentLengthName) with

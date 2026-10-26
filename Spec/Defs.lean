@@ -144,6 +144,16 @@ are invalid. Here a valid one is from 1 to 65535: a TCP port number is
 9.3.6: "An origin server MAY accept a CONNECT request"), so refusing
 port 0 is allowed however "invalid" is read.
 
+RFC 9110, sections 4.2.1 and 4.2.2: "A sender MUST NOT generate an
+"http" URI with an empty host identifier. A recipient that processes
+such a URI reference MUST reject it as invalid", and the same for
+"https". Section 4.2.4: "a recipient SHOULD parse for userinfo and treat
+its presence as an error". So a target whose scheme is http or https, in
+any case (RFC 3986, section 3.1: "schemes are case-insensitive"), must
+be an `http-URI` or `https-URI` with a host that is not empty and no
+userinfo. A CONNECT target is a host and a port, not a URI, so the rule
+does not apply to it: `CONNECT http:80` names the host `http`.
+
 RFC 9110, section 5.2: when a field name is repeated, "its combined
 field value consists of the list of corresponding field line values
 within that section, concatenated in order, with each field line value
@@ -218,6 +228,13 @@ def Spec.ConnectOK (h : Head) : Prop :=
     ∃ host port, h.target = host ++ [0x3A] ++ port ∧ Spec.Matches Spec.uriHost host ∧
       Spec.Matches Spec.port port ∧ 1 ≤ Spec.decimal port ∧ Spec.decimal port ≤ 65535
 
+/-- The rule of RFC 9110 sections 4.2.1, 4.2.2 and 4.2.4 for a target
+    whose scheme is http or https, for any method but CONNECT. -/
+def Spec.HttpTargetOK (h : Head) : Prop :=
+  h.method ≠ Spec.ascii "CONNECT" →
+    (Spec.ascii "http:" <+: h.target.map Spec.lower ∨ Spec.ascii "https:" <+: h.target.map Spec.lower) →
+      Spec.Matches Spec.httpTarget h.target
+
 /-- The combined field value of the field lines `fs` (RFC 9110, section
     5.2): their values in order, separated by commas. -/
 def Spec.combined (fs : List Field) : List UInt8 := List.intercalate [0x2C] (fs.map (·.value))
@@ -236,4 +253,4 @@ def Spec.FramedAs (h : Head) : Framing → Prop
 
 /-- This library accepts the head, and frames its body as `fr`. -/
 def Spec.Accepts (h : Head) (fr : Framing) : Prop :=
-  h.major = 1 ∧ Spec.HostOK h ∧ Spec.ConnectOK h ∧ Spec.FramedAs h fr
+  h.major = 1 ∧ Spec.HostOK h ∧ Spec.ConnectOK h ∧ Spec.HttpTargetOK h ∧ Spec.FramedAs h fr

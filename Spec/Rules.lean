@@ -201,7 +201,7 @@ def Spec.hierPart : Re :=
 /-- `absolute-URI = scheme ":" hier-part [ "?" query ]` -/
 def Spec.absoluteURI : Re := seq [Spec.scheme, litCI ":", Spec.hierPart, opt (cat (litCI "?") Spec.query)]
 
-/-! ## RFC 9110, sections 4.1 and 7.2 -/
+/-! ## RFC 9110, sections 4.1, 4.2 and 7.2 -/
 
 /-- `absolute-path = 1*( "/" segment )` (section 4.1) -/
 def Spec.absolutePath : Re := plus (cat (litCI "/") Spec.segment)
@@ -211,6 +211,23 @@ def Spec.uriHost : Re := Spec.host
 
 /-- `Host = uri-host [ ":" port ]` (section 7.2) -/
 def Spec.hostValue : Re := cat Spec.uriHost (opt (cat (litCI ":") Spec.port))
+
+/-- A `host` that is not empty:
+    `IP-literal / IPv4address / 1*( unreserved / pct-encoded / sub-delims )`.
+    Of the three alternatives of `host`, only `reg-name` can be empty, so
+    this is `host` with `*` in `reg-name` made `1*`. -/
+def Spec.hostNonEmpty : Re :=
+  any [Spec.IPliteral, Spec.IPv4address, plus (any [Spec.unreserved, Spec.pctEncoded, Spec.subDelims])]
+
+/-- `http-URI = "http" "://" authority path-abempty [ "?" query ]`
+    (section 4.2.1) and
+    `https-URI = "https" "://" authority path-abempty [ "?" query ]`
+    (section 4.2.2), where the authority's host is not empty and the
+    authority has no `userinfo`, so it is `host [ ":" port ]`. The
+    rules for this are in `Spec/Defs.lean`. -/
+def Spec.httpTarget : Re :=
+  seq [alt (litCI "http") (litCI "https"), litCI "://", Spec.hostNonEmpty,
+    opt (cat (litCI ":") Spec.port), Spec.pathAbempty, opt (cat (litCI "?") Spec.query)]
 
 /-! ## RFC 9112 -/
 

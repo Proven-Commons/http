@@ -1,7 +1,8 @@
 /-
   The grammar of the request target, the Host field and a
   Transfer-Encoding list, for the code: the rules that `isMatch` checks
-  a target, a Host value and a Transfer-Encoding value against.
+  a target, an http or https target, a Host value and a
+  Transfer-Encoding value against.
   `Proofs/` shows each is the rule of the same name in
   `Spec/Rules.lean`.
 -/
@@ -138,7 +139,7 @@ def hierPart : Re :=
 /-- `absolute-URI = scheme ":" hier-part [ "?" query ]` -/
 def absoluteURI : Re := seq [scheme, litCI ":", hierPart, opt (cat (litCI "?") query)]
 
-/-! ## RFC 9110, sections 4.1 and 7.2 -/
+/-! ## RFC 9110, sections 4.1, 4.2 and 7.2 -/
 
 /-- `absolute-path = 1*( "/" segment )` (section 4.1) -/
 def absolutePath : Re := plus (cat (litCI "/") segment)
@@ -148,6 +149,17 @@ def uriHost : Re := host
 
 /-- `Host = uri-host [ ":" port ]` (section 7.2) -/
 def hostValue : Re := cat uriHost (opt (cat (litCI ":") port))
+
+/-- A `host` that is not empty:
+    `IP-literal / IPv4address / 1*( unreserved / pct-encoded / sub-delims )`. -/
+def hostNonEmpty : Re :=
+  any [IPliteral, IPv4address, plus (any [unreserved, pctEncoded, subDelims])]
+
+/-- An `http-URI` or `https-URI` (sections 4.2.1 and 4.2.2) whose host is
+    not empty and whose authority has no `userinfo`. -/
+def httpTarget : Re :=
+  seq [alt (litCI "http") (litCI "https"), litCI "://", hostNonEmpty,
+    opt (cat (litCI ":") port), pathAbempty, opt (cat (litCI "?") query)]
 
 /-! ## RFC 9110, sections 5.6.1.2 and 5.6.3 -/
 
