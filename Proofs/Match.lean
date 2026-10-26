@@ -112,7 +112,11 @@ theorem mkAlt_iff (a b : Re) (s : List UInt8) :
   · simp [matches_alt_iff, matches_empty_iff]
   · split
     · rename_i h; subst h; simp [matches_alt_iff]
-    · exact Iff.rfl
+    · split
+      · split
+        · rename_i h; subst h; simp only [matches_alt_iff, or_assoc, or_self]
+        · exact Iff.rfl
+      · exact Iff.rfl
 
 theorem deriv_iff (c : UInt8) (r : Re) (s : List UInt8) :
     Spec.Matches (deriv c r) s ↔ Spec.Matches r (c :: s) := by
