@@ -219,6 +219,12 @@ def Spec.hostValue : Re := cat Spec.uriHost (opt (cat (litCI ":") Spec.port))
 def Spec.hostNonEmpty : Re :=
   any [Spec.IPliteral, Spec.IPv4address, plus (any [Spec.unreserved, Spec.pctEncoded, Spec.subDelims])]
 
+/-- A Host value this library accepts: empty, or a host that is not empty
+    with an optional port, `[ hostNonEmpty [ ":" port ] ]`. These are the
+    values of `Host` but those with an empty host and a colon, such as
+    `:80` and `:`. The rules for this are in `Spec/Defs.lean`. -/
+def Spec.hostField : Re := opt (cat Spec.hostNonEmpty (opt (cat (litCI ":") Spec.port)))
+
 /-- `http-URI = "http" "://" authority path-abempty [ "?" query ]`
     (section 4.2.1) and
     `https-URI = "https" "://" authority path-abempty [ "?" query ]`

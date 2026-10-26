@@ -62,9 +62,9 @@ theorem Spec.framing_two_cl (h : Head) (h2 : 2 ≤ (Spec.named h "content-length
 
 /-- Test vectors, each with the answer `framing` gives.
     - Accepted, with no body: the examples of RFC 9112 sections 3.2.1 to
-      3.2.4, an HTTP/1.0 request with no Host, `CONNECT [::1]:65535`,
-      `CONNECT http:80` (the host `http`), and `HTTP://a:/x` (a scheme in
-      upper case and an empty port).
+      3.2.4, an HTTP/1.0 request with no Host, an empty Host value,
+      `CONNECT [::1]:65535`, `CONNECT http:80` (the host `http`), and
+      `HTTP://a:/x` (a scheme in upper case and an empty port).
     - Accepted with a body: `Content-Length: 5`, and Transfer-Encoding
       lists of the one coding `chunked`, in any case and with empty
       elements, which RFC 9110 section 5.6.1.2 says a recipient must
@@ -75,10 +75,11 @@ theorem Spec.framing_two_cl (h : Head) (h2 : 2 ≤ (Spec.named h "content-length
       `chunked`, chunked twice, two Transfer-Encoding lines that list
       another coding, whitespace before a colon, a folded line, a bare
       LF, a bare CR, and Transfer-Encoding in HTTP/1.0.
-    - Rejected too: an HTTP/1.1 request with no Host or with two; a
-      CONNECT with an empty port, port 0, a port above 65535, or a
-      target that is not a host and port; and an http or https target
-      with an empty host or with userinfo. -/
+    - Rejected too: an HTTP/1.1 request with no Host or with two; a Host
+      value with an empty host, `:80` or `:`; a CONNECT with an empty
+      port, port 0, a port above 65535, an empty host, or a target that
+      is not a host and port; and an http or https target with no
+      authority, an empty host or userinfo. -/
 theorem Spec.head_vectors :
     -- Sections 3.2.1 to 3.2.4
     (parseHead (Spec.ascii "GET /where?q=now HTTP/1.1\r\nHost: www.example.org\r\n\r\n")).bind
@@ -132,11 +133,15 @@ theorem Spec.head_vectors :
     (parseHead (Spec.ascii "GET / HTTP/1.1\r\n\r\n")).bind (·.1.framing) = none ∧
     (parseHead (Spec.ascii "GET / HTTP/1.1\r\nHost: a\r\nHost: a\r\n\r\n")).bind (·.1.framing) = none ∧
     (parseHead (Spec.ascii "GET / HTTP/1.0\r\n\r\n")).bind (·.1.framing) = some (.length 0) ∧
+    (parseHead (Spec.ascii "GET / HTTP/1.1\r\nHost:\r\n\r\n")).bind (·.1.framing) = some (.length 0) ∧
+    (parseHead (Spec.ascii "GET / HTTP/1.1\r\nHost: :80\r\n\r\n")).bind (·.1.framing) = none ∧
+    (parseHead (Spec.ascii "GET / HTTP/1.1\r\nHost: :\r\n\r\n")).bind (·.1.framing) = none ∧
     -- The CONNECT rule (RFC 9110, section 9.3.6)
     (parseHead (Spec.ascii "CONNECT a: HTTP/1.1\r\nHost: a\r\n\r\n")).bind (·.1.framing) = none ∧
     (parseHead (Spec.ascii "CONNECT a:0 HTTP/1.1\r\nHost: a\r\n\r\n")).bind (·.1.framing) = none ∧
     (parseHead (Spec.ascii "CONNECT a:65536 HTTP/1.1\r\nHost: a\r\n\r\n")).bind (·.1.framing) = none ∧
     (parseHead (Spec.ascii "CONNECT / HTTP/1.1\r\nHost: a\r\n\r\n")).bind (·.1.framing) = none ∧
+    (parseHead (Spec.ascii "CONNECT :80 HTTP/1.1\r\nHost: a\r\n\r\n")).bind (·.1.framing) = none ∧
     (parseHead (Spec.ascii "CONNECT [::1]:65535 HTTP/1.1\r\nHost: a\r\n\r\n")).bind
       (·.1.framing) = some (.length 0) ∧
     -- http and https targets (RFC 9110, sections 4.2.1, 4.2.2 and 4.2.4)

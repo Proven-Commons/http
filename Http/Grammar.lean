@@ -1,10 +1,11 @@
 /-
   The grammar of the request target, the Host field and a
   Transfer-Encoding list, for the code: the rules that `isMatch` checks
-  a target, an http or https target, a Host value and a
-  Transfer-Encoding value against.
+  a target, an http or https target, a CONNECT target, a Host value and
+  a Transfer-Encoding value against.
   `Proofs/` shows each is the rule of the same name in
-  `Spec/Rules.lean`.
+  `Spec/Rules.lean`, and that a `connectTarget` is a host that is not
+  empty, a colon and a port.
 -/
 
 import Http.Abnf
@@ -147,13 +148,14 @@ def absolutePath : Re := plus (cat (litCI "/") segment)
 /-- `uri-host = <host, see [URI], Section 3.2.2>` -/
 def uriHost : Re := host
 
-/-- `Host = uri-host [ ":" port ]` (section 7.2) -/
-def hostValue : Re := cat uriHost (opt (cat (litCI ":") port))
-
 /-- A `host` that is not empty:
     `IP-literal / IPv4address / 1*( unreserved / pct-encoded / sub-delims )`. -/
 def hostNonEmpty : Re :=
   any [IPliteral, IPv4address, plus (any [unreserved, pctEncoded, subDelims])]
+
+/-- A Host value this library accepts: empty, or a host that is not empty
+    with an optional port, `[ hostNonEmpty [ ":" port ] ]`. -/
+def hostField : Re := opt (cat hostNonEmpty (opt (cat (litCI ":") port)))
 
 /-- An `http-URI` or `https-URI` (sections 4.2.1 and 4.2.2) whose host is
     not empty and whose authority has no `userinfo`. -/
@@ -190,6 +192,10 @@ def absoluteForm : Re := absoluteURI
 
 /-- `authority-form = uri-host ":" port` (section 3.2.3) -/
 def authorityForm : Re := seq [uriHost, litCI ":", port]
+
+/-- A CONNECT target this library accepts: `authority-form` with a host
+    that is not empty, `hostNonEmpty ":" port`. -/
+def connectTarget : Re := seq [hostNonEmpty, litCI ":", port]
 
 /-- `asterisk-form = "*"` (section 3.2.4) -/
 def asteriskForm : Re := litCI "*"

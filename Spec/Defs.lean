@@ -151,8 +151,26 @@ such a URI reference MUST reject it as invalid", and the same for
 its presence as an error". So a target whose scheme is http or https, in
 any case (RFC 3986, section 3.1: "schemes are case-insensitive"), must
 be an `http-URI` or `https-URI` with a host that is not empty and no
-userinfo. A CONNECT target is a host and a port, not a URI, so the rule
-does not apply to it: `CONNECT http:80` names the host `http`.
+userinfo. A CONNECT target is in authority-form, `uri-host ":" port`,
+which has no scheme, so this rule does not apply to it: `CONNECT
+http:80` names the host `http`.
+
+RFC 9112, section 3.3: for a target that is not in absolute-form, the
+server builds the target URI by "concatenating the scheme, "://",
+authority, and combined path and query component". "If the
+request-target is in authority-form, the target URI's authority
+component is the request-target. Otherwise, the target URI's authority
+component is the field value of the Host header field." The scheme is
+http or https unless the server's configuration or a trusted gateway
+gives another, and this library has neither. So `GET /` with `Host: :80`
+has the target URI `http://:80/`, and `CONNECT :80` has `http://:80`.
+Both have an empty host, which sections 4.2.1 and 4.2.2 say a recipient
+must reject. So here a Host value and a CONNECT target must have a host
+that is not empty. An empty Host value is still accepted. Section 3.2
+says "If the authority component is missing or undefined for the target
+URI, then a client MUST send a Host header field with an empty field
+value", and section 3.3 says that then "the server can reject the
+request or determine whether a configured default applies".
 
 RFC 9110, section 5.2: when a field name is repeated, "its combined
 field value consists of the list of corresponding field line values
@@ -215,17 +233,21 @@ def Spec.named (h : Head) (n : String) : List Field :=
 /-- The number that a string of decimal digits writes. -/
 def Spec.decimal (ds : List UInt8) : Nat := ds.foldl (fun n d => 10 * n + (d.toNat - 0x30)) 0
 
-/-- The Host rule of section 3.2. -/
+/-- The Host rule of section 3.2, with the host that section 3.3 puts in
+    the target URI not empty: at most one Host field line, exactly one
+    from HTTP/1.1 on, and its value empty or a host that is not empty
+    with an optional port. -/
 def Spec.HostOK (h : Head) : Prop :=
   (Spec.named h "host").length ≤ 1 ∧ (1 ≤ h.minor → (Spec.named h "host").length = 1) ∧
-    ∀ f ∈ Spec.named h "host", Spec.Matches Spec.hostValue f.value
+    ∀ f ∈ Spec.named h "host", Spec.Matches Spec.hostField f.value
 
 /-- The rule of RFC 9110 section 9.3.6 for CONNECT: the target is
-    `uri-host ":" port`, with a port from 1 to 65535. An empty port
-    writes 0, so it is refused. -/
+    `uri-host ":" port`, with a host that is not empty, as for the target
+    URI of RFC 9112 section 3.3, and a port from 1 to 65535. An empty
+    port writes 0, so it is refused. -/
 def Spec.ConnectOK (h : Head) : Prop :=
   h.method = Spec.ascii "CONNECT" →
-    ∃ host port, h.target = host ++ [0x3A] ++ port ∧ Spec.Matches Spec.uriHost host ∧
+    ∃ host port, h.target = host ++ [0x3A] ++ port ∧ Spec.Matches Spec.hostNonEmpty host ∧
       Spec.Matches Spec.port port ∧ 1 ≤ Spec.decimal port ∧ Spec.decimal port ≤ 65535
 
 /-- The rule of RFC 9110 sections 4.2.1, 4.2.2 and 4.2.4 for a target

@@ -34,20 +34,21 @@ private theorem digits_iff (v : List UInt8) :
   rw [Fields.contentLength_iff]
   cases v <;> simp
 
-theorem hostValue_eq : Grammar.hostValue = Spec.hostValue := rfl
+theorem hostField_eq : Grammar.hostField = Spec.hostField := rfl
 
 theorem chunkedList_eq : Grammar.chunkedList = Spec.listOne (Re.litCI "chunked") := rfl
 
-theorem authorityForm_eq : Grammar.authorityForm = Spec.authorityForm := rfl
+theorem connectTarget_eq :
+    Grammar.connectTarget = Re.seq [Spec.hostNonEmpty, Re.litCI ":", Spec.port] := rfl
 
 private theorem colon_eq : Re.litCI ":" = .range 0x3A 0x3A := rfl
 
-/-- An authority-form target is a host, a colon and a port. -/
-private theorem authorityForm_iff (t : List UInt8) :
-    Spec.Matches Spec.authorityForm t ↔
-      ∃ host port, t = host ++ [0x3A] ++ port ∧ Spec.Matches Spec.uriHost host ∧
+/-- A CONNECT target is a host that is not empty, a colon and a port. -/
+private theorem connectTarget_iff (t : List UInt8) :
+    Spec.Matches (Re.seq [Spec.hostNonEmpty, Re.litCI ":", Spec.port]) t ↔
+      ∃ host port, t = host ++ [0x3A] ++ port ∧ Spec.Matches Spec.hostNonEmpty host ∧
         Spec.Matches Spec.port port := by
-  simp only [Spec.authorityForm, Re.seq, colon_eq, Match.matches_cat_iff, Match.matches_range_iff]
+  simp only [Re.seq, colon_eq, Match.matches_cat_iff, Match.matches_range_iff]
   constructor
   · rintro ⟨host, _, rfl, hh, _, port, rfl, ⟨c, rfl, h1, h2⟩, hp⟩
     have hc : c = 0x3A := UInt8.le_antisymm h2 h1
@@ -72,7 +73,7 @@ theorem connectOK_iff (h : Head) : h.connectOK = true ↔ Spec.ConnectOK h := by
   generalize h.method = m
   generalize h.target = t
   simp only [Bool.or_eq_true, bne_iff_ne, ne_eq, Bool.and_eq_true, decide_eq_true_eq,
-    Match.isMatch_iff, authorityForm_eq, authorityForm_iff]
+    Match.isMatch_iff, connectTarget_eq, connectTarget_iff]
   constructor
   · rintro (hm | ⟨⟨⟨host, port, rfl, hh, hp⟩, h1⟩, h2⟩) hc
     · exact absurd hc hm
@@ -139,11 +140,11 @@ private theorem ite_some_iff {α : Type} {c : Bool} {x y : α} :
 
 private theorem cond_iff (h : Head) (H : List Field) :
     (h.major != 1 || decide (H.length > 1) || (decide (1 ≤ h.minor) && H.length != 1) ||
-      !H.all (fun f => Grammar.hostValue.isMatch f.value)) = false ↔
+      !H.all (fun f => Grammar.hostField.isMatch f.value)) = false ↔
     h.major = 1 ∧ H.length ≤ 1 ∧ (1 ≤ h.minor → H.length = 1) ∧
-      ∀ f ∈ H, Spec.Matches Spec.hostValue f.value := by
+      ∀ f ∈ H, Spec.Matches Spec.hostField f.value := by
   simp only [Bool.or_eq_false_iff, bne_eq_false_iff_eq, decide_eq_false_iff_not, Bool.and_eq_false_imp,
-    decide_eq_true_eq, Bool.not_eq_false', List.all_eq_true, Match.isMatch_iff, hostValue_eq]
+    decide_eq_true_eq, Bool.not_eq_false', List.all_eq_true, Match.isMatch_iff, hostField_eq]
   constructor
   · rintro ⟨⟨⟨h1, h2⟩, h3⟩, h4⟩
     exact ⟨h1, by omega, h3, h4⟩
