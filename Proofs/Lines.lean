@@ -10,38 +10,76 @@ namespace Http.Proofs.Lines
 
 open Http
 
+theorem takeLineFrom_eq (acc bs : List UInt8) :
+    takeLineFrom acc bs = (takeLine bs).map fun p => (acc.reverse ++ p.1, p.2) := by
+  unfold takeLine
+  induction bs generalizing acc with
+  | nil => simp [takeLineFrom]
+  | cons c rest ih =>
+    simp only [takeLineFrom]
+    split
+    · split
+      · split <;> simp
+      · simp
+    · split
+      · simp
+      · rw [ih, ih [c], Option.map_map]
+        congr 1
+        funext p
+        simp
+
+theorem takeLine_nil : takeLine [] = none := rfl
+
+/-- `takeLine` as a recursion on the octets, one at a time. -/
+theorem takeLine_cons (c : UInt8) (rest : List UInt8) :
+    takeLine (c :: rest) =
+      if c == 0x0D then
+        match rest with
+        | d :: rest' => if d == 0x0A then some ([], rest') else none
+        | [] => none
+      else if c == 0x0A then none
+      else (takeLine rest).map fun p => (c :: p.1, p.2) := by
+  conv => lhs; unfold takeLine
+  simp only [takeLineFrom]
+  split
+  · rfl
+  · split
+    · rfl
+    · rw [takeLineFrom_eq]
+      simp
+
 theorem takeLine_iff (bs l r : List UInt8) :
     takeLine bs = some (l, r) ↔ (0x0D ∉ l ∧ 0x0A ∉ l) ∧ bs = l ++ Spec.crlf ++ r := by
   induction bs generalizing l with
   | nil =>
-    simp [takeLine, Spec.crlf]
+    simp [takeLine_nil, Spec.crlf]
   | cons c rest ih =>
     by_cases hc : c = 0x0D
     · subst hc
       cases l with
       | nil =>
         cases rest with
-        | nil => simp [takeLine, Spec.crlf]
+        | nil => simp [takeLine_cons, Spec.crlf]
         | cons d rest' =>
           by_cases hd : d = 0x0A
-          · subst hd; simp [takeLine, Spec.crlf]
-          · simp [takeLine, Spec.crlf, hd]
+          · subst hd; simp [takeLine_cons, Spec.crlf]
+          · simp [takeLine_cons, Spec.crlf, hd]
       | cons x l' =>
         constructor
         · intro h
           cases rest with
-          | nil => simp [takeLine] at h
+          | nil => simp [takeLine_cons] at h
           | cons d rest' =>
             by_cases hd : d = 0x0A
-            · subst hd; simp [takeLine] at h
-            · simp [takeLine, hd] at h
+            · subst hd; simp [takeLine_cons] at h
+            · simp [takeLine_cons, hd] at h
         · rintro ⟨⟨h1, _⟩, h2⟩
           simp at h2
           exact absurd (h2.1 ▸ List.mem_cons_self) h1
     · by_cases hc' : c = 0x0A
       · subst hc'
         constructor
-        · intro h; simp [takeLine] at h
+        · intro h; simp [takeLine_cons] at h
         · rintro ⟨⟨h1, h1'⟩, h2⟩
           cases l with
           | nil => simp [Spec.crlf] at h2
@@ -49,7 +87,7 @@ theorem takeLine_iff (bs l r : List UInt8) :
             simp at h2
             exact absurd (h2.1 ▸ List.mem_cons_self) h1'
       · have e : takeLine (c :: rest) = (takeLine rest).map fun p => (c :: p.1, p.2) := by
-          simp [takeLine, hc, hc']
+          simp [takeLine_cons, hc, hc']
         rw [e]
         cases l with
         | nil =>

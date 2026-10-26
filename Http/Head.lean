@@ -42,18 +42,22 @@ def isFieldValue (v : List UInt8) : Bool :=
 def trim (v : List UInt8) : List UInt8 :=
   ((v.dropWhile isWs).reverse.dropWhile isWs).reverse
 
-/-- The first line: the octets up to the first CR, which must be
-    followed by LF, and what comes after the CRLF. `none` when there is
-    no CR, when a LF comes first, or when the CR is not followed by LF. -/
-def takeLine : List UInt8 → Option (List UInt8 × List UInt8)
+/-- `takeLine`, with the octets of the line read so far in `acc`, last
+    first. It calls itself last, so it runs in constant stack. -/
+def takeLineFrom (acc : List UInt8) : List UInt8 → Option (List UInt8 × List UInt8)
   | [] => none
   | c :: rest =>
     if c == 0x0D then
       match rest with
-      | d :: rest' => if d == 0x0A then some ([], rest') else none
+      | d :: rest' => if d == 0x0A then some (acc.reverse, rest') else none
       | [] => none
     else if c == 0x0A then none
-    else (takeLine rest).map fun p => (c :: p.1, p.2)
+    else takeLineFrom (c :: acc) rest
+
+/-- The first line: the octets up to the first CR, which must be
+    followed by LF, and what comes after the CRLF. `none` when there is
+    no CR, when a LF comes first, or when the CR is not followed by LF. -/
+def takeLine (bs : List UInt8) : Option (List UInt8 × List UInt8) := takeLineFrom [] bs
 
 /-- The octets after any empty lines at the start. -/
 def skipEmpty : List UInt8 → List UInt8
@@ -79,16 +83,23 @@ def parseField (line : List UInt8) : Option Field :=
     if isToken name && isFieldValue value then some ⟨name, value⟩ else none
   | [] => none
 
-/-- The field lines up to the empty line, and what follows it. -/
-def parseFields : Nat → List UInt8 → Option (List Field × List UInt8)
+/-- `parseFields`, with the fields read so far in `acc`, last first. It
+    calls itself last, so it runs in constant stack. -/
+def parseFieldsFrom (acc : List Field) : Nat → List UInt8 → Option (List Field × List UInt8)
   | 0, _ => none
-  | fuel + 1, bs => do
-    let (line, rest) ← takeLine bs
-    if line.isEmpty then pure ([], rest)
-    else
-      let f ← parseField line
-      let (fs, rest') ← parseFields fuel rest
-      pure (f :: fs, rest')
+  | fuel + 1, bs =>
+    match takeLine bs with
+    | none => none
+    | some (line, rest) =>
+      if line.isEmpty then some (acc.reverse, rest)
+      else
+        match parseField line with
+        | none => none
+        | some f => parseFieldsFrom (f :: acc) fuel rest
+
+/-- The field lines up to the empty line, and what follows it. -/
+def parseFields (fuel : Nat) (bs : List UInt8) : Option (List Field × List UInt8) :=
+  parseFieldsFrom [] fuel bs
 
 /-- Reads a request head from the start of `bs`, after any empty lines,
     and gives it with the octets that follow it. -/

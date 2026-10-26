@@ -37,14 +37,18 @@ def hexValue (c : Char) : Option Nat :=
   else if 'a' ≤ c ∧ c ≤ 'f' then some (c.toNat - 'a'.toNat + 10)
   else none
 
-def hexBytes : List Char → Option (List UInt8)
-  | [] => some []
-  | a :: b :: rest => do
-    let hi ← hexValue a
-    let lo ← hexValue b
-    let bs ← hexBytes rest
-    pure ((hi * 16 + lo).toUInt8 :: bs)
+/-- The octets that pairs of hex digits write, with the octets so far in
+    `acc`, last first. It calls itself last, so it runs in constant
+    stack. -/
+def hexBytesFrom (acc : List UInt8) : List Char → Option (List UInt8)
+  | [] => some acc.reverse
+  | a :: b :: rest =>
+    match hexValue a, hexValue b with
+    | some hi, some lo => hexBytesFrom ((hi * 16 + lo).toUInt8 :: acc) rest
+    | _, _ => none
   | [_] => none
+
+def hexBytes (cs : List Char) : Option (List UInt8) := hexBytesFrom [] cs
 
 def hexDigit (n : Nat) : Char := "0123456789abcdef".toList.getD n '0'
 

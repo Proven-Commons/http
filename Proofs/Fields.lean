@@ -4,6 +4,7 @@
 
 import Http.Head
 import Spec.Defs
+import Proofs.Lines
 
 namespace Http.Proofs.Fields
 
@@ -413,51 +414,51 @@ theorem parseField_iff (line : List UInt8) (f : Field) :
     rfl
 
 
-private theorem takeLine_eq : ∀ {bs l r : List UInt8}, takeLine bs = some (l, r) → bs = l ++ Spec.crlf ++ r
-  | [], _, _, h => by simp [takeLine] at h
-  | c :: rest, l, r, h => by
-    unfold takeLine at h
-    split at h
-    · rename_i hc
-      split at h
-      · rename_i d rest'
-        split at h
-        · rename_i hd
-          simp only [Option.some.injEq, Prod.mk.injEq] at h
-          obtain ⟨rfl, rfl⟩ := h
-          simp only [beq_iff_eq] at hc hd
-          subst hc; subst hd; rfl
-        · cases h
-      · cases h
-    · split at h
-      · cases h
-      · cases e : takeLine rest with
-        | none => rw [e] at h; cases h
-        | some p =>
-          rw [e] at h
-          simp only [Option.map_some, Option.some.injEq, Prod.mk.injEq] at h
-          obtain ⟨rfl, rfl⟩ := h
-          rw [takeLine_eq e]
-          rfl
+private theorem takeLine_eq {bs l r : List UInt8} (h : takeLine bs = some (l, r)) :
+    bs = l ++ Spec.crlf ++ r :=
+  ((Lines.takeLine_iff bs l r).1 h).2
 
-private theorem takeLine_app : ∀ {l : List UInt8} (r : List UInt8), (∀ x ∈ l, x ≠ 0x0D ∧ x ≠ 0x0A) →
-    takeLine (l ++ Spec.crlf ++ r) = some (l, r)
-  | [], r, _ => rfl
-  | c :: l, r, h => by
-    have hc := h c (by simp)
-    have hc1 : (c == 0x0D) = false := by simpa using hc.1
-    have hc2 : (c == 0x0A) = false := by simpa using hc.2
-    simp only [List.cons_append]
-    unfold takeLine
-    rw [hc1, hc2]
-    simp only [Bool.false_eq_true, ↓reduceIte]
-    rw [takeLine_app r (fun x hx => h x (by simp [hx]))]
-    rfl
+private theorem takeLine_app {l : List UInt8} (r : List UInt8) (h : ∀ x ∈ l, x ≠ 0x0D ∧ x ≠ 0x0A) :
+    takeLine (l ++ Spec.crlf ++ r) = some (l, r) :=
+  (Lines.takeLine_iff _ l r).2 ⟨⟨fun hx => (h _ hx).1 rfl, fun hx => (h _ hx).2 rfl⟩, rfl⟩
 
+private theorem parseFieldsFrom_eq (acc : List Field) (fuel : Nat) (bs : List UInt8) :
+    parseFieldsFrom acc fuel bs = (parseFields fuel bs).map fun q => (acc.reverse ++ q.1, q.2) := by
+  unfold parseFields
+  induction fuel generalizing acc bs with
+  | zero => rfl
+  | succ fuel ih =>
+    simp only [parseFieldsFrom]
+    split
+    · rfl
+    · split
+      · simp
+      · split
+        · rfl
+        · rw [ih, ih [_], Option.map_map]
+          congr 1
+          funext q
+          simp
+
+/-- `parseFields` as a recursion on the field lines, one at a time. -/
 private theorem parseFields_step (fuel : Nat) (bs : List UInt8) : parseFields (fuel+1) bs =
     (takeLine bs).bind (fun p => if p.1.isEmpty then some ([], p.2) else
-      (parseField p.1).bind (fun f => (parseFields fuel p.2).bind (fun q => some (f :: q.1, q.2)))) :=
-  rfl
+      (parseField p.1).bind (fun f => (parseFields fuel p.2).bind (fun q => some (f :: q.1, q.2)))) := by
+  conv => lhs; unfold parseFields
+  simp only [parseFieldsFrom]
+  cases takeLine bs with
+  | none => rfl
+  | some p =>
+    obtain ⟨line, rest⟩ := p
+    simp only [Option.bind_some]
+    split
+    · simp
+    · cases hf : parseField line with
+      | none => simp
+      | some f =>
+        simp only [Option.bind_some]
+        rw [parseFieldsFrom_eq]
+        cases parseFields fuel rest <;> simp
 
 private theorem tchar_line : ∀ x, isTchar x = true → x ≠ 0x0D ∧ x ≠ 0x0A :=
   uint8_forall (by decide +kernel)
