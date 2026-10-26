@@ -6,12 +6,13 @@ The oracle is the grammar and the rules of RFC 9112, RFC 9110 and
 RFC 3986, written in this script from the RFCs, separately from the Lean
 code and the Lean spec: regular expressions for the request line, the
 field lines and the request target, then the Host rule of RFC 9112
-section 3.2, the CONNECT rule of RFC 9110 section 9.3.6 and the framing
-rules of RFC 9112 section 6.3, with the choices the Lean spec makes (see
-SPEC.md). Transfer-Encoding is read as one list made of all its field
-lines (RFC 9110 section 5.2), in which empty elements do not count
-(section 5.6.1.2). The IPv6 rule of RFC 3986 is also checked against
-Python's `ipaddress`, as a test of the oracle itself.
+section 3.2, the CONNECT rule of RFC 9110 section 9.3.6, the rule of
+RFC 9110 sections 4.2.1, 4.2.2 and 4.2.4 for http and https targets, and
+the framing rules of RFC 9112 section 6.3, with the choices the Lean
+spec makes (see SPEC.md). Transfer-Encoding is read as one list made of
+all its field lines (RFC 9110 section 5.2), in which empty elements do
+not count (section 5.6.1.2). The IPv6 rule of RFC 3986 is also checked
+against Python's `ipaddress`, as a test of the oracle itself.
 
 Inputs come from a recorded seed:
 
@@ -29,6 +30,13 @@ Inputs come from a recorded seed:
 - CONNECT, and `connect`, which is another method, with host and port
   targets whose port is empty, 0, above 65535, long or with leading
   zeros, and with targets of the other three forms;
+- http and https targets, with the scheme in any case: with a host
+  (registered names and IP literals, ports, paths and queries), with an
+  empty host such as `http:///a`, with no `//` such as `http:/a`, with
+  userinfo such as `http://u@a/`, and with an empty port; `CONNECT
+  http:80`, which names the host `http`, and the same target with
+  another method; and schemes such as `httpx` and `ws`, which the rule
+  does not cover;
 - Transfer-Encoding lists with empty elements, such as `chunked,` and
   `, chunked`, and heads with several Transfer-Encoding lines: all but
   one empty or only commas, chunked in two of them, or chunked split
@@ -150,6 +158,14 @@ CHUNKED_ALONE = re.compile(EMPTY_ELEMENTS + rb"[Cc][Hh][Uu][Nn][Kk][Ee][Dd]" + E
 # of the tunnel, "separated by a colon": `uri-host ":" port`.
 CONNECT_TARGET = re.compile(rb"(?:" + HOST + rb"):(" + PORT + rb")")
 
+# RFC 9110, sections 4.2.1 and 4.2.2:
+#   http-URI  = "http"  "://" authority path-abempty [ "?" query ]
+#   https-URI = "https" "://" authority path-abempty [ "?" query ]
+# An authority with no userinfo is host [ ":" port ] (RFC 3986, section
+# 3.2), and after it come path-abempty and the query.
+HOST_PORT = re.compile(rb"(" + HOST + rb")(?::" + PORT + rb")?")
+PATH_QUERY = re.compile(PATH_ABEMPTY + rb"(?:\?" + QUERY + rb")?")
+
 
 def reference(bs):
     """(method, target, major, minor, fields, rest) for the head at the
@@ -194,6 +210,51 @@ def connect_ok(method, target):
     return 1 <= len(digits) <= 5 and int(digits) <= 65535
 
 
+def http_scheme(target):
+    """Whether the scheme of `target` is http or https. Schemes are
+    case-insensitive (RFC 3986, section 3.1), and a scheme ends at the
+    first colon."""
+    scheme, colon, _ = target.partition(b":")
+    return bool(colon) and scheme.lower() in (b"http", b"https")
+
+
+def http_problem(target):
+    """Why a target whose scheme is http or https is not allowed, or None.
+    RFC 9110, sections 4.2.1 and 4.2.2: such a URI is `scheme "://"
+    authority path-abempty [ "?" query ]`, and "A recipient that
+    processes such a URI reference MUST reject it as invalid" when its
+    host is empty. Section 4.2.4: "a recipient SHOULD parse for userinfo
+    and treat its presence as an error"."""
+    rest = target.partition(b":")[2]
+    if not rest.startswith(b"//"):
+        return "no authority"
+    # RFC 3986, section 3.2: the authority "is terminated by the next
+    # slash ("/"), question mark ("?"), or number sign ("#") character,
+    # or by the end of the URI". Section 3.2.1: userinfo is followed by
+    # "@", which no host holds.
+    end = 2
+    while end < len(rest) and rest[end] not in b"/?#":
+        end += 1
+    authority, tail = rest[2:end], rest[end:]
+    if b"@" in authority:
+        return "userinfo"
+    hp = HOST_PORT.fullmatch(authority)
+    if hp and hp.group(1) == b"":
+        return "empty host"
+    if not hp or not PATH_QUERY.fullmatch(tail):
+        return "other"
+    return None
+
+
+def http_target_ok(method, target):
+    """The rule of RFC 9110, sections 4.2.1, 4.2.2 and 4.2.4, for a target
+    whose scheme is http or https. The target of CONNECT is a host and a
+    port (section 9.3.6), not a URI, so the rule is not for it, and
+    `CONNECT http:80` names the host `http`. Any other method, `connect`
+    too, is held to it."""
+    return method == b"CONNECT" or not http_scheme(target) or http_problem(target) is None
+
+
 def combined(values):
     """The combined field value of field lines with these values (RFC
     9110, section 5.2): the values in order, with a comma between each."""
@@ -202,8 +263,8 @@ def combined(values):
 
 def framing(head):
     """How a server frames the body after the head, or None when it must
-    reject it: RFC 9112 sections 3.2 and 6.3 and RFC 9110 section 9.3.6,
-    with the choices of SPEC.md."""
+    reject it: RFC 9112 sections 3.2 and 6.3 and RFC 9110 sections 4.2.1,
+    4.2.2, 4.2.4 and 9.3.6, with the choices of SPEC.md."""
     method, target, major, minor, fields, _ = head
     if major != 1:
         return None
@@ -217,6 +278,8 @@ def framing(head):
     if any(not HOST_FIELD.fullmatch(v) for v in hosts):
         return None
     if not connect_ok(method, target):
+        return None
+    if not http_target_ok(method, target):
         return None
     te, cl = named(b"transfer-encoding"), named(b"content-length")
     if te and cl:
@@ -384,15 +447,77 @@ def connect_port(rng):
 
 
 def connect_target(rng):
-    """A target for CONNECT: mostly a host and a port, and sometimes
-    another form, such as a URI that also fits authority-form."""
+    """A target for CONNECT: mostly a host and a port, sometimes with the
+    host `http` or `https`, and sometimes another form, such as a URI
+    that also fits authority-form."""
     r = rng.random()
-    if r < 0.75:
+    if r < 0.7:
         return host(rng) + b":" + connect_port(rng)
-    if r < 0.85:
+    if r < 0.77:
+        return scheme_case(rng, rng.choice([b"http", b"https"])) + b":" + connect_port(rng)
+    if r < 0.87:
         return rng.choice([b"a:1", b"x:443", b"a:0", b"a:65536", b"a:", b"http://a:80/", b"http://a:80",
-                           b"a:b", b"a:1/", b"a:/", b"a:1?q", b"fe80::1:80", b"mailto:x@y", b"*", b"/"])
+                           b"a:b", b"a:1/", b"a:/", b"a:1?q", b"fe80::1:80", b"mailto:x@y", b"*", b"/",
+                           b"http:80", b"https:443", b"HTTP:443", b"http:", b"https:0", b"http:/a"])
     return target(rng)
+
+
+def scheme_case(rng, s):
+    """`s` in lower case, upper case, with a capital, or in mixed case.
+    Schemes are case-insensitive (RFC 3986, section 3.1)."""
+    r = rng.random()
+    if r < 0.5:
+        return s
+    if r < 0.7:
+        return s.upper()
+    if r < 0.85:
+        return s[:1].upper() + s[1:]
+    return bytes(c ^ 0x20 if rng.random() < 0.5 else c for c in s)
+
+
+# Ends of http and https targets, after the colon, that are easy to get
+# wrong: an empty port, "@" after the authority, userinfo that looks
+# like a port, an empty host before ":" or "?", and a path that starts
+# with "//".
+HTTP_TRICKY = [b"//a:/", b"//a:", b"//a?", b"//a?@", b"//a/u@b", b"//a/?u@b", b"//a:1@b/", b"//a:b@c/",
+               b"//@a", b"//u@", b"//u@:80", b"////a", b"//[::1]", b"//[::1]:/", b"//1.2.3.4:080",
+               b"//%41/", b"//!$&'()*+,;=/", b"//a.b.c:65536/x?y", b"//:", b"//:/", b"//?", b"//?q",
+               b"//a//", b"80", b"443", b"//80", b"/a:b@c"]
+
+
+def http_target(rng):
+    """A target with the scheme http or https, in any case: mostly an
+    http-URI or https-URI with a host, and sometimes one with an empty
+    host, with userinfo, or with no "//" at all."""
+    scheme = scheme_case(rng, rng.choice([b"http", b"https"]))
+
+    def opt_port():
+        return b":" + port(rng) if rng.random() < 0.35 else b""
+    r = rng.random()
+    if r < 0.64:
+        rest = b"//" + host(rng) + opt_port()
+    elif r < 0.72:
+        # An empty host
+        rest = b"//" + opt_port()
+    elif r < 0.82:
+        # Userinfo, sometimes empty
+        user = rng.choice([b"", b"u", b"u:p", b":", b"u:", pchars(rng, rng.randint(0, 5), b":")])
+        rest = b"//" + user + b"@" + host(rng) + opt_port()
+    elif r < 0.94:
+        # No "//": an empty hier-part, path-absolute, path-rootless, or
+        # digits, which also fit authority-form
+        rest = rng.choice([b"", b"/", b"/" + pchars(rng, rng.randint(1, 5)),
+                           pchars(rng, rng.randint(1, 5)), port(rng) or b"80"])
+        if rest and rng.random() < 0.3:
+            rest += path(rng)
+        return scheme + b":" + rest + (b"?" + query(rng) if rng.random() < 0.2 else b"")
+    else:
+        return scheme + b":" + rng.choice(HTTP_TRICKY)
+    if rng.random() < 0.6:
+        rest += path(rng)
+    if rng.random() < 0.3:
+        rest += b"?" + query(rng)
+    return scheme + b":" + rest
 
 
 def target(rng):
@@ -400,7 +525,12 @@ def target(rng):
     if r < 0.55:
         return path(rng) + (b"?" + query(rng) if rng.random() < 0.4 else b"")
     if r < 0.8:
-        scheme = rng.choice([b"http", b"https", b"ws", b"a+b.c-d", b"x"])
+        if rng.random() < 0.45:
+            return http_target(rng)
+        # Other schemes, some of which start with http, are not held to
+        # the rule for http and https.
+        scheme = rng.choice([b"ws", b"WS", b"a+b.c-d", b"x", b"httpx", b"HTTPX", b"https+x", b"http.s",
+                             b"htt"])
         auth = b""
         if rng.random() < 0.15:
             auth += pchars(rng, rng.randint(0, 5), b":") + b"@"
@@ -705,6 +835,72 @@ FIXED = [
     b"CONNECT 1.2.3.4:443 HTTP/1.0\r\n\r\n",
     b"connect a: HTTP/1.1\r\nHost: a\r\n\r\n",
     b"Connect / HTTP/1.1\r\nHost: a\r\n\r\n",
+    # RFC 9110, sections 4.2.1, 4.2.2 and 4.2.4: http and https targets,
+    # with the scheme in any case (RFC 3986, section 3.1). First the
+    # inputs of Spec.head_vectors.
+    b"GET http: HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET http:///a HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET https://u@a/ HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET HTTP://a:/x HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"CONNECT http:80 HTTP/1.1\r\nHost: http\r\n\r\n",
+    # An empty host
+    b"GET http:// HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET https:// HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET http://:80/ HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET HTTP://:/ HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET http://?q HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET Https:///a HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET http:////a HTTP/1.1\r\nHost: a\r\n\r\n",
+    # No "//", so no authority
+    b"GET https: HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET http:/a HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET http:a HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET HTTP:/ HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET http:?q HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET http:/a:b@c HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET http:80 HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET https:443 HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"OPTIONS http:80 HTTP/1.1\r\nHost: a\r\n\r\n",
+    # Userinfo
+    b"GET http://u@a/ HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET http://u:p@a/ HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET http://@a/ HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET HTTPS://u@a HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET http://a:1@b/ HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET http://u@/ HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET http://u@[::1]:80/ HTTP/1.1\r\nHost: a\r\n\r\n",
+    # Accepted: an empty port or none, IP literals, registered names,
+    # paths and queries, "@" in the path or the query, and a port above
+    # 65535, which these rules do not limit
+    b"GET http://a:/ HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET http://a: HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET http://a HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET HTTPS://a:443 HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET hTtP://[::1]:8080/x?y HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET https://[v1.x]/ HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET http://192.0.2.1/a/b?c=d HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET http://1.2.3.256/ HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET http://%41%42/ HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET http://a/u@b HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET http://a?u@b HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET http://a//b HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET http://a:99999/ HTTP/1.1\r\nHost: a\r\n\r\n",
+    # CONNECT: a host and a port, so the host is http or https
+    b"CONNECT http:80 HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"CONNECT https:443 HTTP/1.1\r\nHost: https\r\n\r\n",
+    b"CONNECT HTTP:8080 HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"CONNECT http: HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"CONNECT http://a:80 HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"connect http:80 HTTP/1.1\r\nHost: a\r\n\r\n",
+    # Other schemes are not held to the rule
+    b"GET httpx:// HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET httpx://u@/ HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET ws:// HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET ws://u@a/ HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET https+x: HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET htt:a HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET http.s:/ HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET /http://u@a/ HTTP/1.1\r\nHost: a\r\n\r\n",
     # Versions
     b"GET / HTTP/2.0\r\nHost: a\r\n\r\n",
     b"GET / HTTP/1.2\r\nHost: a\r\n\r\n",
@@ -914,6 +1110,9 @@ def statistics(items):
     other_case = {"accepted": 0, "rejected": 0}
     te = {"lines": 0, "empty": 0, "empty chunked": 0, "several": 0, "several chunked": 0}
     bare_host = {"accepted": 0, "rejected": 0}
+    http = {"read": 0, "upper": 0, "accepted": 0, "no authority": 0, "empty host": 0, "userinfo": 0,
+            "other": 0, "elsewhere": 0, "connect": 0, "connect accepted": 0}
+    other_scheme = {"read": 0, "http": 0, "accepted": 0}
     bad_tail, zone, upper_v = [], [], []
     for label, req, want, _ in items:
         if label == "error":
@@ -965,6 +1164,22 @@ def statistics(items):
                     ports["zeros"] += 1
         elif method.upper() == b"CONNECT":
             other_case["accepted" if fr else "rejected"] += 1
+        scheme = t.partition(b":")[0]
+        if http_scheme(t) and method == b"CONNECT":
+            http["connect"] += 1
+            http["connect accepted"] += fr is not None
+        elif http_scheme(t):
+            http["read"] += 1
+            http["upper"] += scheme != scheme.lower()
+            problem = http_problem(t)
+            if problem:
+                http[problem] += 1
+            else:
+                http["accepted" if fr else "elsewhere"] += 1
+        elif absolute and not authority:
+            other_scheme["read"] += 1
+            other_scheme["http"] += scheme.lower().startswith(b"http")
+            other_scheme["accepted"] += fr is not None
         values = [v for k, v in fields if k.lower() == b"transfer-encoding"]
         if values:
             te["lines"] += 1
@@ -999,6 +1214,19 @@ def statistics(items):
         f"- Heads read with `connect` or another case of it, which is a different method: "
         f"{sum(other_case.values())}, {other_case['accepted']} accepted, "
         f"{other_case['rejected']} rejected",
+        f"- Heads read with a target whose scheme is http or https, in any case, and a method "
+        f"other than `CONNECT`: {http['read']}, {http['upper']} of them with upper case in the "
+        f"scheme. Accepted: {http['accepted']}. Against the rule of RFC 9110 section 4.2, and so "
+        f"rejected: {http['no authority']} with no `//` and so no authority, "
+        f"{http['empty host']} with an empty host, {http['userinfo']} with userinfo"
+        + (f", {http['other']} for another reason" if http["other"] else "")
+        + f". Rejected only by another rule: {http['elsewhere']}",
+        f"- Heads read with `CONNECT` and a target that starts with `http:` or `https:`, in any "
+        f"case, which names the host http or https: {http['connect']}, "
+        f"{http['connect accepted']} accepted",
+        f"- Heads read with an absolute-form target of another scheme, which that rule does not "
+        f"cover: {other_scheme['read']}, {other_scheme['http']} of them with a scheme that starts "
+        f"with `http`, such as `httpx`; {other_scheme['accepted']} accepted",
         f"- Heads read with Transfer-Encoding: {te['lines']}. With an empty list element in the "
         f"combined value: {te['empty']}, {te['empty chunked']} chunked and "
         f"{te['empty'] - te['empty chunked']} rejected. With two or more Transfer-Encoding "
