@@ -1,6 +1,6 @@
 /-
   The definitions the statements use: the text of a request head, and
-  the rules of RFC 9112 and RFC 9110 for which requests a server
+  the rules of RFC 9112 and RFC 9110 for which requests this library
   accepts and how the body that follows the head is framed. Part of the
   approved specification, with `Spec.lean`, and written from the RFCs,
   independently of the code in `Http/`.

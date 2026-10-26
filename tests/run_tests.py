@@ -262,9 +262,9 @@ def combined(values):
 
 
 def framing(head):
-    """How a server frames the body after the head, or None when it must
-    reject it: RFC 9112 sections 3.2 and 6.3 and RFC 9110 sections 4.2.1,
-    4.2.2, 4.2.4 and 9.3.6, with the choices of SPEC.md."""
+    """How this library frames the body after the head, or None when this
+    library refuses it: RFC 9112 sections 3.2 and 6.3 and RFC 9110
+    sections 4.2.1, 4.2.2, 4.2.4 and 9.3.6, with the choices of SPEC.md."""
     method, target, major, minor, fields, _ = head
     if major != 1:
         return None

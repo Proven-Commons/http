@@ -1,6 +1,7 @@
 /-
-  Whether a server accepts a request head, and how the body after it is
-  framed (RFC 9112, sections 3.2, 6.1 and 6.3).
+  Whether this library accepts a request head, and how the body after it
+  is framed (RFC 9112, sections 3.2, 6.1 and 6.3, and RFC 9110, sections
+  4.2, 5.2, 5.6.1.2 and 9.3.6).
 -/
 
 import Http.Head
@@ -55,7 +56,7 @@ def Head.httpTargetOK (h : Head) : Bool :=
 /-- The framing of the body after the head, or `none` when this library
     refuses the request: a major version other than 1, a missing,
     repeated or invalid Host, a CONNECT without a valid port, an http or
-    https target with an empty host or with userinfo,
+    https target with no authority, an empty host or userinfo,
     Transfer-Encoding together with Content-Length, Transfer-Encoding in
     HTTP/1.0 or with a value other than a list of the one coding
     `chunked`, or Content-Length other than one string of digits. -/
