@@ -95,8 +95,7 @@ def Head.framing (h : Head) : Option Framing :=
     match h.fields.filter (·.isNamed transferEncodingName),
         h.fields.filter (·.isNamed contentLengthName) with
     | [], [] => some (.length 0)
-    | [], [f] =>
-      if !f.value.isEmpty && f.value.all isDigit then some (.length (decimalFast f.value)) else none
+    | [], [f] => if !f.value.isEmpty && f.value.all isDigit then some (.length (decimalFast f.value)) else none
     | t :: ts, [] =>
       if 1 ≤ h.minor && Grammar.chunkedList.isMatch (List.intercalate [0x2C] ((t :: ts).map (·.value)))
       then some .chunked else none

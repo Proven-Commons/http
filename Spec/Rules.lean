@@ -221,8 +221,9 @@ def Spec.hostNonEmpty : Re :=
 
 /-- A Host value this library accepts: empty, or a host that is not empty
     with an optional port, `[ hostNonEmpty [ ":" port ] ]`. These are the
-    values of `Host` but those with an empty host and a colon, such as
-    `:80` and `:`. The rules for this are in `Spec/Defs.lean`. -/
+    values of `Host` (`Spec.hostValue`) but those with an empty host and
+    a colon, such as `:80` and `:`. The rules for this are in
+    `Spec/Defs.lean`. -/
 def Spec.hostField : Re := opt (cat Spec.hostNonEmpty (opt (cat (litCI ":") Spec.port)))
 
 /-- `http-URI = "http" "://" authority path-abempty [ "?" query ]`
