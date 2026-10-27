@@ -15,8 +15,34 @@ def lower (c : UInt8) : UInt8 := if 0x41 ≤ c && c ≤ 0x5A then c + 0x20 else 
     given in lower case. -/
 def Field.isNamed (f : Field) (n : List UInt8) : Bool := f.name.map lower == n
 
-/-- The number a string of decimal digits writes. -/
+/-- The number a string of decimal digits writes, one digit at a time.
+    Each step takes time that grows with the number so far, so the time
+    grows with the square of the number of digits. -/
 def decimal (ds : List UInt8) : Nat := ds.foldl (fun n d => 10 * n + (d.toNat - 0x30)) 0
+
+/-- `decimal` of the `n` digits `ds`, by halves, for at most `fuel`
+    levels: the number that `hi ++ lo` writes is the number `hi` writes
+    times 10 to the length of `lo`, plus the number `lo` writes. Up to 18
+    digits are read one at a time. -/
+def decimalBy : Nat → Nat → List UInt8 → Nat
+  | 0, _, ds => decimal ds
+  | fuel + 1, n, ds =>
+    if n ≤ 18 then decimal ds
+    else
+      let (hi, lo) := ds.splitAt (n / 2)
+      decimalBy fuel (n / 2) hi * 10 ^ (n - n / 2) + decimalBy fuel (n - n / 2) lo
+
+/-- The number a string of decimal digits writes, read by halves, so
+    that the work is in multiplications of large numbers, not in one
+    step per digit. -/
+def decimalFast (ds : List UInt8) : Nat := decimalBy ds.length ds.length ds
+
+/-- Whether a string of decimal digits writes a number from 1 to 65535.
+    After the leading zeros, more than five digits write 100000 or more,
+    so at most five digits are converted. -/
+def portInRange (ds : List UInt8) : Bool :=
+  let ds := ds.dropWhile (· == 0x30)
+  if ds.length ≤ 5 then 1 ≤ decimal ds && decimal ds ≤ 65535 else false
 
 /-- `host`, `content-length` and `transfer-encoding`. -/
 def hostName : List UInt8 := [0x68, 0x6F, 0x73, 0x74]
@@ -37,8 +63,7 @@ def portOf (t : List UInt8) : List UInt8 := (t.reverse.takeWhile isDigit).revers
     empty and a port from 1 to 65535. Any other method keeps it. -/
 def Head.connectOK (h : Head) : Bool :=
   h.method != connectName ||
-    (Grammar.connectTarget.isMatch h.target && 1 ≤ decimal (portOf h.target) &&
-      decimal (portOf h.target) ≤ 65535)
+    (Grammar.connectTarget.isMatch h.target && portInRange (portOf h.target))
 
 /-- `http:` and `https:`. -/
 def httpColon : List UInt8 := [0x68, 0x74, 0x74, 0x70, 0x3A]
@@ -70,7 +95,8 @@ def Head.framing (h : Head) : Option Framing :=
     match h.fields.filter (·.isNamed transferEncodingName),
         h.fields.filter (·.isNamed contentLengthName) with
     | [], [] => some (.length 0)
-    | [], [f] => if !f.value.isEmpty && f.value.all isDigit then some (.length (decimal f.value)) else none
+    | [], [f] =>
+      if !f.value.isEmpty && f.value.all isDigit then some (.length (decimalFast f.value)) else none
     | t :: ts, [] =>
       if 1 ≤ h.minor && Grammar.chunkedList.isMatch (List.intercalate [0x2C] ((t :: ts).map (·.value)))
       then some .chunked else none

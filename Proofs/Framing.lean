@@ -29,6 +29,104 @@ private theorem named_eq (h : Head) (s : String) :
 
 private theorem decimal_eq : decimal = Spec.decimal := rfl
 
+private theorem foldl_digits (b : List UInt8) (x : Nat) :
+    b.foldl (fun n d => 10 * n + (d.toNat - 0x30)) x =
+      x * 10 ^ b.length + b.foldl (fun n d => 10 * n + (d.toNat - 0x30)) 0 := by
+  induction b generalizing x with
+  | nil => simp
+  | cons d b ih =>
+    simp only [List.foldl_cons, List.length_cons]
+    rw [ih, ih (10 * 0 + _), Nat.pow_succ]
+    simp only [Nat.mul_zero, Nat.zero_add, Nat.add_mul, Nat.mul_assoc, Nat.add_assoc]
+    have e : 10 * (x * 10 ^ b.length) = x * (10 ^ b.length * 10) := by
+      rw [Nat.mul_left_comm, Nat.mul_comm 10]
+    rw [e]
+
+/-- The number that `a ++ b` writes. -/
+private theorem decimal_append (a b : List UInt8) :
+    decimal (a ++ b) = decimal a * 10 ^ b.length + decimal b := by
+  unfold decimal
+  rw [List.foldl_append, foldl_digits]
+
+private theorem decimalBy_eq (fuel n : Nat) (ds : List UInt8) (hn : ds.length = n) :
+    decimalBy fuel n ds = decimal ds := by
+  induction fuel generalizing n ds with
+  | zero => rfl
+  | succ fuel ih =>
+    simp only [decimalBy, List.splitAt_eq]
+    split
+    · rfl
+    · rw [ih (n / 2) _ (by simp [hn]; omega), ih (n - n / 2) _ (by simp [hn])]
+      conv => rhs; rw [← List.take_append_drop (n / 2) ds]
+      rw [decimal_append, List.length_drop, hn]
+
+private theorem decimalFast_eq : decimalFast = Spec.decimal := by
+  funext ds
+  exact decimalBy_eq _ _ _ rfl
+
+private theorem decimal_zero_cons (cs : List UInt8) : decimal (0x30 :: cs) = decimal cs := by
+  simp [decimal]
+
+/-- What is left of a string of digits after its leading zeros writes the
+    same number, and is empty or starts with a digit other than 0. -/
+private theorem dropZeros (ds : List UInt8) (hd : ∀ c ∈ ds, isDigit c = true) :
+    decimal (ds.dropWhile (· == 0x30)) = decimal ds ∧ (∀ c ∈ ds.dropWhile (· == 0x30), isDigit c = true) ∧
+      ∀ d rest, ds.dropWhile (· == 0x30) = d :: rest → d ≠ 0x30 := by
+  induction ds with
+  | nil => simp
+  | cons c cs ih =>
+    have hcs : ∀ x ∈ cs, isDigit x = true := fun x hx => hd x (by simp [hx])
+    by_cases hc : c = 0x30
+    · subst hc
+      have e : (0x30 :: cs).dropWhile (· == (0x30 : UInt8)) = cs.dropWhile (· == 0x30) := by
+        simp
+      rw [e, decimal_zero_cons]
+      exact ih hcs
+    · have e : (c :: cs).dropWhile (· == (0x30 : UInt8)) = c :: cs := by
+        simp [hc]
+      rw [e]
+      refine ⟨rfl, hd, ?_⟩
+      intro d rest h
+      simp only [List.cons.injEq] at h
+      rw [← h.1]
+      exact hc
+
+/-- A string of digits that starts with a digit other than 0 writes at
+    least 10 to the number of digits after the first. -/
+private theorem decimal_ge (d : UInt8) (rest : List UInt8) (hd : isDigit d = true) (h0 : d ≠ 0x30) :
+    10 ^ rest.length ≤ decimal (d :: rest) := by
+  have e : decimal (d :: rest) = decimal [d] * 10 ^ rest.length + decimal rest := decimal_append [d] rest
+  have h1 : 1 ≤ decimal [d] := by
+    simp only [decimal, List.foldl_cons, List.foldl_nil]
+    simp only [isDigit, Bool.and_eq_true, decide_eq_true_eq] at hd
+    have : d.toNat ≠ 0x30 := fun h => h0 (UInt8.toNat_inj.mp h)
+    have := UInt8.le_iff_toNat_le.mp hd.1
+    simp at this ⊢
+    omega
+  rw [e]
+  calc 10 ^ rest.length = 1 * 10 ^ rest.length := (Nat.one_mul _).symm
+    _ ≤ decimal [d] * 10 ^ rest.length := Nat.mul_le_mul_right _ h1
+    _ ≤ _ := Nat.le_add_right _ _
+
+private theorem portInRange_iff (ds : List UInt8) (hd : ∀ c ∈ ds, isDigit c = true) :
+    portInRange ds = true ↔ 1 ≤ Spec.decimal ds ∧ Spec.decimal ds ≤ 65535 := by
+  obtain ⟨hdec, hdig, hlead⟩ := dropZeros ds hd
+  rw [← decimal_eq, ← hdec]
+  unfold portInRange
+  generalize ds.dropWhile (· == 0x30) = z at hdig hlead
+  simp only
+  split
+  · simp only [Bool.and_eq_true, decide_eq_true_eq]
+  · rename_i hlen
+    simp only [Bool.false_eq_true, false_iff]
+    rintro ⟨-, h2⟩
+    cases z with
+    | nil => simp at hlen
+    | cons d rest =>
+      have hge := decimal_ge d rest (hdig d (by simp)) (hlead d rest rfl)
+      have : 10 ^ 5 ≤ 10 ^ rest.length := Nat.pow_le_pow_right (by decide) (by simp at hlen; omega)
+      omega
+
 private theorem digits_iff (v : List UInt8) :
     (!v.isEmpty && v.all isDigit) = true ↔ Spec.Matches Spec.contentLength v := by
   rw [Fields.contentLength_iff]
@@ -72,18 +170,18 @@ theorem connectOK_iff (h : Head) : h.connectOK = true ↔ Spec.ConnectOK h := by
   rw [ec]
   generalize h.method = m
   generalize h.target = t
-  simp only [Bool.or_eq_true, bne_iff_ne, ne_eq, Bool.and_eq_true, decide_eq_true_eq,
+  simp only [Bool.or_eq_true, bne_iff_ne, ne_eq, Bool.and_eq_true,
     Match.isMatch_iff, connectTarget_eq, connectTarget_iff]
   constructor
-  · rintro (hm | ⟨⟨⟨host, port, rfl, hh, hp⟩, h1⟩, h2⟩) hc
+  · rintro (hm | ⟨⟨host, port, rfl, hh, hp⟩, hr⟩) hc
     · exact absurd hc hm
-    · rw [portOf_eq ((Fields.port_iff port).1 hp)] at h1 h2
-      exact ⟨host, port, rfl, hh, hp, h1, h2⟩
+    · rw [portOf_eq ((Fields.port_iff port).1 hp), portInRange_iff _ ((Fields.port_iff port).1 hp)] at hr
+      exact ⟨host, port, rfl, hh, hp, hr.1, hr.2⟩
   · intro hc
     by_cases hm : m = connectName
     · obtain ⟨host, port, rfl, hh, hp, h1, h2⟩ := hc hm
-      rw [portOf_eq ((Fields.port_iff port).1 hp), decimal_eq]
-      exact .inr ⟨⟨⟨host, port, rfl, hh, hp⟩, h1⟩, h2⟩
+      rw [portOf_eq ((Fields.port_iff port).1 hp)]
+      exact .inr ⟨⟨host, port, rfl, hh, hp⟩, (portInRange_iff _ ((Fields.port_iff port).1 hp)).2 ⟨h1, h2⟩⟩
     · exact .inl hm
 
 theorem httpTarget_eq : Grammar.httpTarget = Spec.httpTarget := rfl
@@ -186,7 +284,7 @@ theorem framing_iff (h : Head) (fr : Framing) : h.framing = some fr ↔ Spec.Acc
     generalize h.fields.filter (·.isNamed transferEncodingName) = T
     generalize h.fields.filter (·.isNamed contentLengthName) = C
     rcases T with _ | ⟨t, T⟩ <;> rcases C with _ | ⟨c, _ | ⟨c2, C⟩⟩ <;>
-      simp [← digits_iff, decimal_eq]
+      simp [← digits_iff, decimalFast_eq]
     all_goals (intros; exact eq_comm)
 
 theorem framing_te_cl (h : Head) (hte : Spec.named h "transfer-encoding" ≠ [])
