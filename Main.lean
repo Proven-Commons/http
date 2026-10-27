@@ -55,8 +55,29 @@ def hexDigit (n : Nat) : Char := "0123456789abcdef".toList.getD n '0'
 def toHex (bs : List UInt8) : String :=
   String.ofList (bs.flatMap fun b => [hexDigit (b.toNat / 16), hexDigit (b.toNat % 16)])
 
+/-- `s` with zeros in front, to make at least `width` characters. -/
+def padZeros (s : String) (width : Nat) : String :=
+  String.ofList (List.replicate (width - s.length) '0') ++ s
+
+/-- The decimal digits of `n`, with zeros in front to make at least
+    `width` digits, as `toString` writes them. `toString` finds one digit
+    at a time, so for a number of many digits it takes time that grows
+    with the square of their number. From 2^64 on, `n` is split instead
+    into its high and low digits, by dividing by a power of 10, and each
+    part is written the same way, for at most `fuel` levels. -/
+def decimalText : Nat → Nat → Nat → String
+  | 0, n, width => padZeros (toString n) width
+  | fuel + 1, n, width =>
+    if n < 2 ^ 64 then padZeros (toString n) width
+    else
+      -- `n.log2 * 3 / 10 + 1` is at most the number of digits of `n`, so
+      -- the high part is not 0
+      let k := (n.log2 * 3 / 10 + 1) / 2
+      let p := 10 ^ k
+      decimalText fuel (n / p) (width - k) ++ decimalText fuel (n % p) k
+
 def framingText : Option Framing → String
-  | some (.length n) => s!"length {n}"
+  | some (.length n) => "length " ++ decimalText 64 n 0
   | some .chunked => "chunked"
   | none => "reject"
 
@@ -100,8 +121,9 @@ def check : IO UInt32 := do
     IO.println s!"{escape h.method} {escape h.target} HTTP/{h.major}.{h.minor}"
     for f in h.fields do
       IO.println s!"{escape f.name}: {escape f.value}"
-    IO.println (framingText h.framing)
-    return if h.framing.isSome then 0 else 1
+    let fr := h.framing
+    IO.println (framingText fr)
+    return if fr.isSome then 0 else 1
   | none =>
     IO.println "invalid"
     return 1
