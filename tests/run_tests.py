@@ -28,7 +28,9 @@ Inputs come from a recorded seed:
 - hosts that RFC 3986 does not allow, in targets and Host values: an
   IPv6 literal whose IPv4 tail has an octet above 255 or with a leading
   zero, an IP literal with an RFC 6874 zone ID such as
-  `[fe80::1%25eth0]`, and an IPv6 address with no brackets;
+  `[fe80::1%25eth0]`, IPvFuture with no hex digit or nothing after the
+  dot, such as `[v.a]` and `[v1.]`, and an IPv6 address with no
+  brackets;
 - Host values that are empty, and Host values with an empty host before
   a colon, such as `:80` and `:`;
 - CONNECT, and `connect`, which is another method, with host and port
@@ -449,9 +451,20 @@ def host(rng):
     if r < 0.92:
         return ipv6(rng)
     if r < 0.97:
+        # IPvFuture, "v" 1*HEXDIG "." 1*( unreserved / sub-delims / ":" ),
+        # and sometimes with no hex digit or no octet after the dot, which
+        # it does not allow.
         tail = b"".join(pick(rng, UNRES + SUBS + b":") for _ in range(rng.randint(1, 5)))
         v = rng.choice([b"v", b"V"])
-        return b"[" + v + h16(rng) + b"." + (tail if rng.random() < 0.8 else pchars(rng, 3)) + b"]"
+        hexd = h16(rng)
+        x = rng.random()
+        if x < 0.1:
+            hexd = b""
+        elif x < 0.2:
+            tail = b""
+        elif x < 0.36:
+            tail = pchars(rng, 3)
+        return b"[" + v + hexd + b"." + tail + b"]"
     return b""
 
 
@@ -829,6 +842,10 @@ FIXED = [
     # four dec-octets, an RFC 6874 zone ID, and IPv6 with no brackets
     b"GET http://[V1.a]/ HTTP/1.1\r\nHost: x\r\n\r\n",
     b"GET / HTTP/1.1\r\nHost: [VF.a]\r\n\r\n",
+    # IPvFuture with no hex digit, or with nothing after the dot
+    b"GET / HTTP/1.1\r\nHost: [v.a]\r\n\r\n",
+    b"GET / HTTP/1.1\r\nHost: [v1.]\r\n\r\n",
+    b"GET http://[v1.]/ HTTP/1.1\r\nHost: a\r\n\r\n",
     b"GET / HTTP/1.1\r\nHost: [::1.2.3.255]\r\n\r\n",
     b"GET / HTTP/1.1\r\nHost: [::1.2.3.256]\r\n\r\n",
     b"GET / HTTP/1.1\r\nHost: [::1.2.3.259]\r\n\r\n",
@@ -1152,6 +1169,7 @@ def tally(answers):
 V4_TAIL = re.compile(rb"\[[0-9A-Fa-f:]*:([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\]")
 ZONE_ID = re.compile(rb"\[[0-9A-Fa-f:.]*:[0-9A-Fa-f:.]*%[^\]]*\]")
 UPPER_V = re.compile(rb"\[V[0-9A-Fa-f]+\.[^\]]*\]")
+SHORT_FUTURE = re.compile(rb"\[[vV]\.[^\]]*\]|\[[vV][0-9A-Fa-f]*\.\]")
 
 
 def statistics(items):
@@ -1167,7 +1185,7 @@ def statistics(items):
             "other": 0, "elsewhere": 0, "connect": 0, "connect accepted": 0}
     other_scheme = {"read": 0, "http": 0, "accepted": 0}
     host_values = {"all": 0, "empty": 0, "empty accepted": 0, "empty host": 0, "empty host accepted": 0}
-    bad_tail, zone, upper_v = [], [], []
+    bad_tail, zone, upper_v, short_future = [], [], [], []
     for label, req, want, _ in items:
         if label == "error":
             continue
@@ -1178,6 +1196,8 @@ def statistics(items):
             zone.append(outcome(want))
         if UPPER_V.search(bs):
             upper_v.append(outcome(want))
+        if SHORT_FUTURE.search(bs):
+            short_future.append(outcome(want))
         head = reference(bs)
         if head is None:
             continue
@@ -1304,6 +1324,8 @@ def statistics(items):
         f"- IP literals with a zone ID (`%` inside the brackets), anywhere in the input: "
         f"{read_or_not(zone)}",
         f"- IPvFuture with an upper-case `V`, anywhere in the input: {read_or_not(upper_v)}",
+        f"- IPvFuture with no hex digit or nothing after the dot, such as `[v.a]` or `[v1.]`, "
+        f"which RFC 3986 does not allow, anywhere in the input: {read_or_not(short_future)}",
         f"- Host values of the heads read: {host_values['all']}. Empty: {host_values['empty']}, "
         f"{host_values['empty accepted']} of them in an accepted head. With an empty host before "
         f"a colon, such as `:80` or `:`: {host_values['empty host']}, "
