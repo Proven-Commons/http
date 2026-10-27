@@ -259,17 +259,24 @@ EMPTY_HOST = "an empty Host"
 
 def te_reason(te):
     """Why this project does not read these Transfer-Encoding values as
-    the one coding chunked."""
-    codings = [e.strip(b" \t") for e in rt.combined(te).split(b",")]
-    codings = [c for c in codings if c]
+    the one coding chunked. Each element of the list is a coding and its
+    parameters, `token *( OWS ";" OWS transfer-parameter )` (RFC 9110,
+    section 10.1.4), so the coding names are compared without them. RFC
+    9112 section 7.1 says the chunked coding has no parameters, and
+    "Their presence SHOULD be treated as an error"."""
+    elements = [e.strip(b" \t") for e in rt.combined(te).split(b",")]
+    elements = [e for e in elements if e]
+    codings = [e.split(b";", 1)[0].rstrip(b" \t").lower() for e in elements]
     if not codings:
         cat = "a Transfer-Encoding with no coding"
-    elif sum(c.lower() == b"chunked" for c in codings) > 1:
+    elif codings.count(b"chunked") > 1:
         cat = "chunked twice"
-    elif codings[-1].lower() != b"chunked":
+    elif codings[-1] != b"chunked":
         cat = "a Transfer-Encoding whose last coding is not chunked"
     elif len(codings) > 1:
         cat = "a Transfer-Encoding with another coding before chunked"
+    elif b";" in elements[-1]:
+        cat = "chunked with a parameter"
     else:
         cat = "another Transfer-Encoding"
     return cat + (", over two or more lines" if len(te) > 1 else "")
