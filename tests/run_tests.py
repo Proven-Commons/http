@@ -56,7 +56,10 @@ Inputs come from a recorded seed:
 - fixed cases: the examples of RFC 9112, the classic shapes of request
   smuggling, every input of `Spec.head_vectors` in Spec.lean, the inputs
   that the reviews of these tests named, and malformed requests to the
-  tool.
+  tool;
+- long inputs, outside the count: a request line and a field value of
+  16 MB, a Content-Length and CONNECT ports of 1,000,000 digits, and
+  64 KB of spaces in a Transfer-Encoding list, each with a time bound.
 
 It builds the executable first, writes tests/TEST-RESULTS.md, and exits
 non-zero if any input disagrees.
@@ -71,6 +74,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -323,7 +327,9 @@ def framing(head):
     if cl:
         if len(cl) != 1 or not re.fullmatch(rb"[0-9]+", cl[0]):
             return None
-        return f"length {int(cl[0])}"
+        # The number the digits write, in decimal: the digits without
+        # their leading zeros. int() is not given very long strings.
+        return f"length {cl[0].lstrip(b'0').decode() or '0'}"
     return "length 0"
 
 
@@ -335,8 +341,10 @@ def printed(head):
     return out + b"\r\n"
 
 
-def answer(bs):
-    head = reference(bs)
+def answer(bs, head=None):
+    """The answer `httphead serve` must give to `head` and the hex of
+    `bs`. `head` is reference(bs), given when it is already known."""
+    head = head or reference(bs)
     if head is None:
         return "REJECT"
     fr = framing(head)
@@ -1116,26 +1124,30 @@ def escape(bs):
     return "".join(chr(b) if 0x20 <= b < 0x7F and b != 0x5C else f"\\x{b:02x}" for b in bs)
 
 
+def check_answer(head):
+    """The lines `httphead check` must print for a head, or for None, and
+    its exit status: the head, a line for each field and the framing, or
+    `invalid`, and 0 only for a framed request."""
+    if head is None:
+        return ["invalid"], 1
+    method, target, major, minor, fields, _ = head
+    want = [f"{escape(method)} {escape(target)} HTTP/{major}.{minor}"]
+    want += [f"{escape(k)}: {escape(v)}" for k, v in fields]
+    fr = framing(head)
+    want.append(fr or "reject")
+    return want, 0 if fr else 1
+
+
 def check_mode(items, limit=2000):
     """Runs `check` mode on the first `limit` inputs, each sent alone on
-    standard input. Each must print the head, a line for each field and
-    the framing, or `invalid`, and exit 0 only for a framed request."""
+    standard input. Each must print what check_answer says."""
     problems = []
     done = 0
     for label, req, _, _ in items:
         if label == "error" or done >= limit:
             continue
         bs = bytes.fromhex(req.split(" ")[1])
-        head = reference(bs)
-        if head is None:
-            want, code_want = ["invalid"], 1
-        else:
-            method, target, major, minor, fields, _ = head
-            want = [f"{escape(method)} {escape(target)} HTTP/{major}.{minor}"]
-            want += [f"{escape(k)}: {escape(v)}" for k, v in fields]
-            fr = framing(head)
-            want.append(fr or "reject")
-            code_want = 0 if fr else 1
+        want, code_want = check_answer(reference(bs))
         run = subprocess.run([str(EXE), "check"], input=bs, capture_output=True, timeout=300)
         got = run.stdout.decode("utf-8", "backslashreplace").split("\n")[:-1]
         if got != want or run.returncode != code_want:
@@ -1146,6 +1158,74 @@ def check_mode(items, limit=2000):
     if run.returncode != 2:
         problems.append(("no arguments", "usage and exit 2", f"exit {run.returncode}"))
     return done, problems
+
+
+MB = 1 << 20
+
+
+def long_inputs():
+    """(name, input, seconds) for each long input. The grammar sets no
+    limit on the length of a head. These inputs catch three faults an
+    earlier version of the code had: its stack grew with the length of a
+    line, and overflowed at about 10 MB; it converted a Content-Length
+    or a CONNECT port in time that grows with the square of the number
+    of digits; and the derivative of a Transfer-Encoding list grew by a
+    level for each space after a comma. The port of zeros then 443 must
+    be accepted, though it is long. Each run of the tool on one of them
+    must end within its seconds, which are at least 20 times the longest
+    it took in the runs made to set them. MB here is 2^20 octets, and KB
+    2^10."""
+    return [
+        ("a request line of 16 MB", b"GET /" + b"a" * (16 * MB) + b" HTTP/1.1\r\nHost: a\r\n\r\n", 400),
+        ("a field value of 16 MB with a NUL at the end",
+         b"GET / HTTP/1.1\r\nHost: a\r\nX: " + b"a" * (16 * MB) + b"\x00\r\n\r\n", 150),
+        ("a Content-Length of 1,000,000 digits, 1234567890 repeated",
+         b"POST /a HTTP/1.1\r\nHost: a\r\nContent-Length: " + b"1234567890" * 100_000 + b"\r\n\r\n", 30),
+        ("a CONNECT port of 1,000,000 nines",
+         b"CONNECT a:" + b"9" * 1_000_000 + b" HTTP/1.1\r\nHost: a\r\n\r\n", 30),
+        ("a CONNECT port of 1,000,000 zeros, then 443",
+         b"CONNECT a:" + b"0" * 1_000_000 + b"443 HTTP/1.1\r\nHost: a\r\n\r\n", 30),
+        ("a Transfer-Encoding value with 64 KB of spaces after a comma",
+         b"POST /a HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked," + b" " * (64 << 10) + b",\r\n\r\n",
+         10),
+    ]
+
+
+def check_long():
+    """Gives each long input to `httphead check` on standard input and to
+    `httphead serve`. Each answer must be the oracle's, and each run must
+    end within the seconds the input has. Returns the inputs, the number
+    of runs that were right in time, the seconds each run took, and the
+    problems."""
+    inputs = long_inputs()
+    right, took, problems = 0, [], []
+    for name, bs, seconds in inputs:
+        head = reference(bs)
+        want, code_want = check_answer(head)
+        start = time.monotonic()
+        try:
+            run = subprocess.run([str(EXE), "check"], input=bs, capture_output=True, timeout=seconds)
+            got = run.stdout.decode("utf-8", "backslashreplace").split("\n")[:-1]
+            problem = None if got == want and run.returncode == code_want else \
+                f"{got[-1:]} exit {run.returncode}, {len(got)} lines"
+        except subprocess.TimeoutExpired:
+            problem = f"no end after {seconds} seconds"
+        took.append(time.monotonic() - start)
+        if problem:
+            problems.append((f"check < {name}", f"{want[-1:]} exit {code_want}, {len(want)} lines",
+                             problem))
+        else:
+            right += 1
+        want = answer(bs, head)
+        start = time.monotonic()
+        got, problem = run_tool(f"head {bs.hex()}\n", timeout=seconds)
+        took.append(time.monotonic() - start)
+        if problem or got != [want]:
+            problems.append((f"serve: head {name}", want[-40:],
+                             problem or (got[0][-40:] if len(got) == 1 else f"{len(got)} lines")))
+        else:
+            right += 1
+    return inputs, right, took, problems
 
 
 def outcome(want):
@@ -1409,6 +1489,9 @@ def main():
     checked, check_problems = check_mode(items)
     failures += check_problems
 
+    long, long_right, long_took, long_problems = check_long()
+    failures += long_problems
+
     got, problem = run_tool(f"head {FIXED[0].hex()}", timeout=60)
     eof_right = got == [answer(FIXED[0])] and not problem
     if not eof_right:
@@ -1448,6 +1531,10 @@ def main():
         f"- Requests ending in CR LF: every seventh, {len(items) // 7}",
         f"- Inputs also given to `httphead check` on standard input: {checked}, and once with no "
         f"arguments",
+        f"- Long inputs, each given to `httphead check` on standard input and to `httphead serve`, "
+        f"each run within the time in brackets: "
+        + "; ".join(f"{name} ({seconds} s)" for name, _, seconds in long)
+        + f". Runs answered right in time: {long_right} of {2 * len(long)}",
         f"- A last line with no LF, sent alone, answered right: {'yes' if eof_right else 'no'}",
         f"- Failures: {len(failures)}",
         "",
