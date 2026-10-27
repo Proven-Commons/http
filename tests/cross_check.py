@@ -410,9 +410,11 @@ def features(bs):
         reason = None
         if not m:
             reason = "CONNECT whose target is not a host and port"
-        elif m.group(1) == b"":
+        elif m.group("host") == b"":
+            reason = "CONNECT with an empty host"
+        elif m.group("port") == b"":
             reason = "CONNECT with an empty port"
-        elif m.group(1).lstrip(b"0") == b"":
+        elif m.group("port").lstrip(b"0") == b"":
             reason = "CONNECT with port 0"
         elif not rt.connect_ok(method, target):
             reason = "CONNECT with a port above 65535"
@@ -468,8 +470,10 @@ def features(bs):
         reason = "two Host lines"
     elif head[3] >= 1 and not hosts:
         reason = "no Host, in HTTP/1.1 to 1.9"
-    elif hosts and not rt.HOST_FIELD.fullmatch(hosts[0]):
-        if b"[" in hosts[0] or b"]" in hosts[0] or hosts[0].count(b":") > 1:
+    elif hosts and not rt.host_ok(hosts[0]):
+        if rt.HOST_FIELD.fullmatch(hosts[0]):
+            reason = "a Host value with an empty host, such as `:80`"
+        elif b"[" in hosts[0] or b"]" in hosts[0] or hosts[0].count(b":") > 1:
             reason = "a Host value with a bad IP literal"
         else:
             reason = "another Host value outside RFC 3986"

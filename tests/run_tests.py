@@ -7,12 +7,14 @@ RFC 3986, written in this script from the RFCs, separately from the Lean
 code and the Lean spec: regular expressions for the request line, the
 field lines and the request target, then the Host rule of RFC 9112
 section 3.2, the CONNECT rule of RFC 9110 section 9.3.6, the rule of
-RFC 9110 sections 4.2.1, 4.2.2 and 4.2.4 for http and https targets, and
-the framing rules of RFC 9112 section 6.3, with the choices the Lean
-spec makes (see SPEC.md). Transfer-Encoding is read as one list made of
-all its field lines (RFC 9110 section 5.2), in which empty elements do
-not count (section 5.6.1.2). The IPv6 rule of RFC 3986 is also checked
-against Python's `ipaddress`, as a test of the oracle itself.
+RFC 9110 sections 4.2.1, 4.2.2 and 4.2.4 for http and https targets, the
+rule of RFC 9112 section 3.3 that the host of the target URI built from
+a Host value or a CONNECT target is not empty, and the framing rules of
+RFC 9112 section 6.3, with the choices the Lean spec makes (see
+SPEC.md). Transfer-Encoding is read as one list made of all its field
+lines (RFC 9110 section 5.2), in which empty elements do not count
+(section 5.6.1.2). The IPv6 rule of RFC 3986 is also checked against
+Python's `ipaddress`, as a test of the oracle itself.
 
 Inputs come from a recorded seed:
 
@@ -27,9 +29,12 @@ Inputs come from a recorded seed:
   IPv6 literal whose IPv4 tail has an octet above 255 or with a leading
   zero, an IP literal with an RFC 6874 zone ID such as
   `[fe80::1%25eth0]`, and an IPv6 address with no brackets;
+- Host values that are empty, and Host values with an empty host before
+  a colon, such as `:80` and `:`;
 - CONNECT, and `connect`, which is another method, with host and port
   targets whose port is empty, 0, above 65535, long or with leading
-  zeros, and with targets of the other three forms;
+  zeros, with an empty host, such as `:443`, and with targets of the
+  other three forms;
 - http and https targets, with the scheme in any case: with a host
   (registered names and IP literals, ports, paths and queries), with an
   empty host such as `http:///a`, with no `//` such as `http:/a`, with
@@ -131,7 +136,8 @@ TOKEN = TCHAR + rb"+"
 VCHAR_OR_OBS = rb"[\x21-\x7e\x80-\xff]"
 FIELD_VALUE = rb"(?:" + VCHAR_OR_OBS + rb"(?:[ \t\x21-\x7e\x80-\xff]*" + VCHAR_OR_OBS + rb")?)?"
 ABSOLUTE_PATH = rb"(?:/" + SEGMENT + rb")+"
-HOST_FIELD = re.compile(HOST + rb"(?::" + PORT + rb")?")
+# Host = uri-host [ ":" port ]
+HOST_FIELD = re.compile(rb"(?P<host>" + HOST + rb")(?::" + PORT + rb")?")
 
 # RFC 9112, sections 3.2.1 to 3.2.4
 ORIGIN_FORM = ABSOLUTE_PATH + rb"(?:\?" + QUERY + rb")?"
@@ -156,7 +162,7 @@ CHUNKED_ALONE = re.compile(EMPTY_ELEMENTS + rb"[Cc][Hh][Uu][Nn][Kk][Ee][Dd]" + E
 
 # RFC 9110, section 9.3.6: the target of CONNECT is the host and the port
 # of the tunnel, "separated by a colon": `uri-host ":" port`.
-CONNECT_TARGET = re.compile(rb"(?:" + HOST + rb"):(" + PORT + rb")")
+CONNECT_TARGET = re.compile(rb"(?P<host>" + HOST + rb"):(?P<port>" + PORT + rb")")
 
 # RFC 9110, sections 4.2.1 and 4.2.2:
 #   http-URI  = "http"  "://" authority path-abempty [ "?" query ]
@@ -193,20 +199,44 @@ def reference(bs):
     return m.group(1), m.group(2), int(m.group(3)), int(m.group(4)), fields, bs[end + 4:]
 
 
+def target_uri_host_ok(host):
+    """RFC 9112, section 3.3: for a target that is not in absolute-form,
+    the target URI is "the scheme, "://", authority, and combined path
+    and query component", and its authority is the CONNECT target, or
+    else the Host value. The scheme here is http or https, so by RFC 9110
+    sections 4.2.1 and 4.2.2 the host in that authority must not be
+    empty: "A recipient that processes such a URI reference MUST reject
+    it as invalid"."""
+    return host != b""
+
+
+def host_ok(value):
+    """The Host rule of RFC 9112, section 3.2, for one Host value: it is
+    `uri-host [ ":" port ]` (RFC 9110, section 7.2), with a host that is
+    not empty, as target_uri_host_ok says. An empty value is allowed:
+    section 3.2 has a client send one when the target URI has no
+    authority, and section 3.3 says that then "the server can reject the
+    request or determine whether a configured default applies"."""
+    if value == b"":
+        return True
+    m = HOST_FIELD.fullmatch(value)
+    return m is not None and target_uri_host_ok(m.group("host"))
+
+
 def connect_ok(method, target):
     """RFC 9110, section 9.3.6: "A server MUST reject a CONNECT request
     that targets an empty or invalid port number". The method token is
     case-sensitive (section 9.1), so only `CONNECT` is held to this. Its
-    target must be a host and a port, and here a valid port is from 1 to
-    65535."""
+    target must be a host and a port, the host must not be empty (see
+    target_uri_host_ok), and here a valid port is from 1 to 65535."""
     if method != b"CONNECT":
         return True
     m = CONNECT_TARGET.fullmatch(target)
-    if not m:
+    if not m or not target_uri_host_ok(m.group("host")):
         return False
     # Leading zeros do not change the number. More than five digits after
     # them is above 65535, and int() is not given very long strings.
-    digits = m.group(1).lstrip(b"0")
+    digits = m.group("port").lstrip(b"0")
     return 1 <= len(digits) <= 5 and int(digits) <= 65535
 
 
@@ -249,9 +279,9 @@ def http_problem(target):
 def http_target_ok(method, target):
     """The rule of RFC 9110, sections 4.2.1, 4.2.2 and 4.2.4, for a target
     whose scheme is http or https. The target of CONNECT is a host and a
-    port (section 9.3.6), not a URI, so the rule is not for it, and
-    `CONNECT http:80` names the host `http`. Any other method, `connect`
-    too, is held to it."""
+    port (section 9.3.6), in authority-form, which has no scheme, so the
+    rule is not for it, and `CONNECT http:80` names the host `http`. Any
+    other method, `connect` too, is held to it."""
     return method == b"CONNECT" or not http_scheme(target) or http_problem(target) is None
 
 
@@ -275,7 +305,7 @@ def framing(head):
     hosts = named(b"host")
     if len(hosts) > 1 or (minor >= 1 and len(hosts) != 1):
         return None
-    if any(not HOST_FIELD.fullmatch(v) for v in hosts):
+    if any(not host_ok(v) for v in hosts):
         return None
     if not connect_ok(method, target):
         return None
@@ -447,12 +477,14 @@ def connect_port(rng):
 
 
 def connect_target(rng):
-    """A target for CONNECT: mostly a host and a port, sometimes with the
-    host `http` or `https`, and sometimes another form, such as a URI
-    that also fits authority-form."""
+    """A target for CONNECT: mostly a host and a port, sometimes with an
+    empty host or with the host `http` or `https`, and sometimes another
+    form, such as a URI that also fits authority-form."""
     r = rng.random()
-    if r < 0.7:
+    if r < 0.65:
         return host(rng) + b":" + connect_port(rng)
+    if r < 0.7:
+        return b":" + connect_port(rng)
     if r < 0.77:
         return scheme_case(rng, rng.choice([b"http", b"https"])) + b":" + connect_port(rng)
     if r < 0.87:
@@ -566,10 +598,15 @@ def ows(rng):
 
 
 def host_value(rng):
+    """A Host value: mostly a host with an optional port, sometimes empty
+    or with an empty host before a colon, and sometimes not of the
+    grammar."""
     r = rng.random()
-    if r < 0.95:
+    if r < 0.9:
         h = host(rng)
         return h + (b":" + port(rng) if rng.random() < 0.3 else b"")
+    if r < 0.95:
+        return rng.choice([b"", b"", b":", b":80", b":" + port(rng)])
     return rng.choice([b"a b", b"x/y", b"[::1", b"h:p", b"@x", b"%zz", b"x?", b"::1", b"fe80::1",
                        b"::ffff:1.2.3.4"])
 
@@ -811,6 +848,14 @@ FIXED = [
     b"GET / HTTP/1.1\r\nHost: a\r\nHost: a\r\n\r\n",
     b"GET / HTTP/1.1\r\nHost:\r\n\r\n",
     b"GET / HTTP/1.1\r\nHost: a b\r\n\r\n",
+    # An empty host before a colon: the target URI of RFC 9112 section 3.3
+    # would have an empty host. The first two are in Spec.head_vectors.
+    b"GET / HTTP/1.1\r\nHost: :80\r\n\r\n",
+    b"GET / HTTP/1.1\r\nHost: :\r\n\r\n",
+    b"OPTIONS * HTTP/1.1\r\nHost: :8080\r\n\r\n",
+    b"GET http://a/ HTTP/1.1\r\nHost: :80\r\n\r\n",
+    b"GET / HTTP/1.1\r\nHost: a:\r\n\r\n",
+    b"GET / HTTP/1.0\r\nHost:\r\n\r\n",
     b"GET / HTTP/1.0\r\n\r\n",
     b"GET / HTTP/1.0\r\nHost: a\r\nHost: b\r\n\r\n",
     # RFC 9110, section 9.3.6: CONNECT, with the port from 1 to 65535
@@ -833,6 +878,11 @@ FIXED = [
     b"CONNECT a:00080 HTTP/1.1\r\nHost: a\r\n\r\n",
     b"CONNECT a:065535 HTTP/1.1\r\nHost: a\r\n\r\n",
     b"CONNECT 1.2.3.4:443 HTTP/1.0\r\n\r\n",
+    # An empty host. The first is in Spec.head_vectors.
+    b"CONNECT :80 HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"CONNECT :443 HTTP/1.0\r\n\r\n",
+    b"CONNECT : HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"connect :80 HTTP/1.1\r\nHost: a\r\n\r\n",
     b"connect a: HTTP/1.1\r\nHost: a\r\n\r\n",
     b"Connect / HTTP/1.1\r\nHost: a\r\n\r\n",
     # RFC 9110, sections 4.2.1, 4.2.2 and 4.2.4: http and https targets,
@@ -1105,7 +1155,7 @@ def statistics(items):
     """Lines for TEST-RESULTS.md that count how often the inputs reached
     each form of target and each new rule."""
     targets = {"origin": 0, "absolute": 0, "authority": 0, "both": 0, "asterisk": 0, "literal": 0}
-    connect = {"accepted": 0, "port": 0, "form": 0, "other": 0}
+    connect = {"accepted": 0, "empty host": 0, "port": 0, "form": 0, "other": 0}
     ports = {"empty": 0, "zero": 0, "big": 0, "zeros": 0}
     other_case = {"accepted": 0, "rejected": 0}
     te = {"lines": 0, "empty": 0, "empty chunked": 0, "several": 0, "several chunked": 0}
@@ -1113,6 +1163,7 @@ def statistics(items):
     http = {"read": 0, "upper": 0, "accepted": 0, "no authority": 0, "empty host": 0, "userinfo": 0,
             "other": 0, "elsewhere": 0, "connect": 0, "connect accepted": 0}
     other_scheme = {"read": 0, "http": 0, "accepted": 0}
+    host_values = {"all": 0, "empty": 0, "empty accepted": 0, "empty host": 0, "empty host accepted": 0}
     bad_tail, zone, upper_v = [], [], []
     for label, req, want, _ in items:
         if label == "error":
@@ -1148,10 +1199,12 @@ def statistics(items):
                 connect["accepted"] += 1
             elif connect_ok(method, t):
                 connect["other"] += 1
-            elif authority:
-                connect["port"] += 1
-            else:
+            elif not authority:
                 connect["form"] += 1
+            elif t.startswith(b":"):
+                connect["empty host"] += 1
+            else:
+                connect["port"] += 1
             if authority:
                 p = t.rsplit(b":", 1)[1]
                 if p == b"":
@@ -1190,7 +1243,16 @@ def statistics(items):
                 te["several"] += 1
                 te["several chunked"] += fr == "chunked"
         for k, v in fields:
-            if k.lower() == b"host" and b"[" not in v and v.count(b":") >= 2:
+            if k.lower() != b"host":
+                continue
+            host_values["all"] += 1
+            if v == b"":
+                host_values["empty"] += 1
+                host_values["empty accepted"] += fr is not None
+            elif v.startswith(b":"):
+                host_values["empty host"] += 1
+                host_values["empty host accepted"] += fr is not None
+            if b"[" not in v and v.count(b":") >= 2:
                 bare_host["accepted" if fr else "rejected"] += 1
     n_connect = sum(connect.values())
 
@@ -1205,9 +1267,11 @@ def statistics(items):
         f"fit both absolute-form and authority-form (such as `a:1`), {targets['asterisk']} "
         f"asterisk-form; {targets['literal']} with an IP literal",
         f"- Heads read with the method `CONNECT`: {n_connect}. Accepted: {connect['accepted']}. "
-        f"Against the CONNECT rule, and so rejected: {connect['port']} with a host and port "
-        f"target whose port is not from 1 to 65535, and {connect['form']} with a target of "
-        f"another form. Rejected only by another rule: {connect['other']}",
+        f"Against the CONNECT rule, and so rejected: {connect['empty host']} with a host and "
+        f"port target whose host is empty, such as `:443`, {connect['port']} with a host and "
+        f"port target whose host is not empty and whose port is not from 1 to 65535, and "
+        f"{connect['form']} with a target of another form. Rejected only by another rule: "
+        f"{connect['other']}",
         f"- Ports of those `CONNECT` targets that are a host and port: {ports['empty']} empty, "
         f"{ports['zero']} zero, {ports['big']} above 65535, {ports['zeros']} from 1 to 65535 "
         f"with leading zeros",
@@ -1237,6 +1301,10 @@ def statistics(items):
         f"- IP literals with a zone ID (`%` inside the brackets), anywhere in the input: "
         f"{read_or_not(zone)}",
         f"- IPvFuture with an upper-case `V`, anywhere in the input: {read_or_not(upper_v)}",
+        f"- Host values of the heads read: {host_values['all']}. Empty: {host_values['empty']}, "
+        f"{host_values['empty accepted']} of them in an accepted head. With an empty host before "
+        f"a colon, such as `:80` or `:`: {host_values['empty host']}, "
+        f"{host_values['empty host accepted']} of them in an accepted head",
         f"- Host values of the heads read that hold two or more colons and no `[`, such as an "
         f"IPv6 address with no brackets: {sum(bare_host.values())}, {bare_host['accepted']} "
         f"in an accepted head",
