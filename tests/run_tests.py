@@ -21,10 +21,10 @@ Inputs come from a recorded seed:
 - valid heads: methods, targets in all four forms (paths with
   percent-escapes and queries, URIs with user info, registered names,
   IPv4, IPv6 in all its compressed forms, IPvFuture with `v` or `V`, and
-  ports, host and port, and `*`), versions, fields with values of
-  visible characters, obs-text and inner whitespace, and Host,
-  Content-Length and Transfer-Encoding fields in many forms, some valid
-  and some not;
+  ports, host and port, and `*`), versions, among them major version 9,
+  fields with values of visible characters, obs-text and inner
+  whitespace, and Host, Content-Length and Transfer-Encoding fields in
+  many forms, some valid and some not;
 - hosts that RFC 3986 does not allow, in targets and Host values: an
   IPv6 literal whose IPv4 tail has an octet above 255 or with a leading
   zero, an IP literal with an RFC 6874 zone ID such as
@@ -682,7 +682,8 @@ def valid_head(rng):
     else:
         method = rng.choice(METHODS) if rng.random() < 0.8 else token(rng)
         tgt = target(rng)
-    major, minor = rng.choice([(1, 1)] * 14 + [(1, 0)] * 4 + [(1, 2), (2, 0), (0, 9), (1, 9)])
+    major, minor = rng.choice([(1, 1)] * 14 + [(1, 0)] * 4 + [(1, 2), (2, 0), (0, 9), (1, 9), (9, 9),
+                                                               (9, 1)])
     line = method + b" " + tgt + b" HTTP/" + str(major).encode() + b"." + str(minor).encode()
     fields = []
     nhost = rng.choice([1] * 16 + [0, 2])
@@ -958,6 +959,8 @@ FIXED = [
     b"GET / HTTP/1.10\r\nHost: a\r\n\r\n",
     b"GET / HTTP/1\r\nHost: a\r\n\r\n",
     b"GET / HTTP/1.x\r\nHost: a\r\n\r\n",
+    b"GET / HTTP/9.9\r\nHost: a\r\n\r\n",
+    b"GET / HTTP/9.1\r\nHost: a\r\n\r\n",
     # Empty lines first, and a head cut short
     b"\r\n\r\nGET / HTTP/1.1\r\nHost: a\r\n\r\n",
     b"\n\r\nGET / HTTP/1.1\r\nHost: a\r\n\r\n",
