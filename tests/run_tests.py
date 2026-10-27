@@ -1182,8 +1182,9 @@ def statistics(items):
     te = {"lines": 0, "empty": 0, "empty chunked": 0, "several": 0, "several chunked": 0}
     bare_host = {"accepted": 0, "rejected": 0}
     http = {"read": 0, "upper": 0, "accepted": 0, "no authority": 0, "empty host": 0, "userinfo": 0,
-            "other": 0, "elsewhere": 0, "connect": 0, "connect accepted": 0}
-    other_scheme = {"read": 0, "http": 0, "accepted": 0}
+            "other": 0, "elsewhere": 0}
+    http_connect = {"host and port": 0, "host and port accepted": 0, "other": 0, "other accepted": 0}
+    other_scheme = {"only": 0, "both": 0, "http": 0, "accepted": 0}
     host_values = {"all": 0, "empty": 0, "empty accepted": 0, "empty host": 0, "empty host accepted": 0}
     bad_tail, zone, upper_v, short_future = [], [], [], []
     for label, req, want, _ in items:
@@ -1242,8 +1243,9 @@ def statistics(items):
             other_case["accepted" if fr else "rejected"] += 1
         scheme = t.partition(b":")[0]
         if http_scheme(t) and method == b"CONNECT":
-            http["connect"] += 1
-            http["connect accepted"] += fr is not None
+            form = "host and port" if CONNECT_TARGET.fullmatch(t) else "other"
+            http_connect[form] += 1
+            http_connect[form + " accepted"] += fr is not None
         elif http_scheme(t):
             http["read"] += 1
             http["upper"] += scheme != scheme.lower()
@@ -1252,8 +1254,8 @@ def statistics(items):
                 http[problem] += 1
             else:
                 http["accepted" if fr else "elsewhere"] += 1
-        elif absolute and not authority:
-            other_scheme["read"] += 1
+        elif absolute and method != b"CONNECT":
+            other_scheme["both" if authority else "only"] += 1
             other_scheme["http"] += scheme.lower().startswith(b"http")
             other_scheme["accepted"] += fr is not None
         values = [v for k, v in fields if k.lower() == b"transfer-encoding"]
@@ -1309,11 +1311,17 @@ def statistics(items):
         + (f", {http['other']} for another reason" if http["other"] else "")
         + f". Rejected only by another rule: {http['elsewhere']}",
         f"- Heads read with `CONNECT` and a target that starts with `http:` or `https:`, in any "
-        f"case, which names the host http or https: {http['connect']}, "
-        f"{http['connect accepted']} accepted",
-        f"- Heads read with an absolute-form target of another scheme, which that rule does not "
-        f"cover: {other_scheme['read']}, {other_scheme['http']} of them with a scheme that starts "
-        f"with `http`, such as `httpx`; {other_scheme['accepted']} accepted",
+        f"case: {http_connect['host and port'] + http_connect['other']}. "
+        f"Of them, {http_connect['host and port']} are a host and port, such as `http:80`, which "
+        f"names the host http or https, {http_connect['host and port accepted']} of them "
+        f"accepted; and {http_connect['other']} are of another form, such as `http://a:80/`, "
+        f"{http_connect['other accepted']} of them accepted",
+        f"- Heads read with a target of another scheme that fits absolute-form, and a method "
+        f"other than `CONNECT`, which that rule does not cover: "
+        f"{other_scheme['only'] + other_scheme['both']}, {other_scheme['only']} absolute-form "
+        f"only and {other_scheme['both']} that also fit authority-form, such as `x:443`; "
+        f"{other_scheme['http']} of them with a scheme that starts with `http`, such as `httpx`; "
+        f"{other_scheme['accepted']} accepted",
         f"- Heads read with Transfer-Encoding: {te['lines']}. With an empty list element in the "
         f"combined value: {te['empty']}, {te['empty chunked']} chunked and "
         f"{te['empty'] - te['empty chunked']} rejected. With two or more Transfer-Encoding "
