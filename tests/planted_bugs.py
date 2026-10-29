@@ -56,15 +56,21 @@ UPPER_NAMES = (
     "name is a token, so it never holds a CR. The proof of framing_iff, which covers every "
     "Head, would catch it; the tests cannot")
 
+CONNECT_EMPTY_HOST = (
+    "`hostNonEmpty` and `uriHost` differ only on the empty host, so the change lets through only "
+    "a CONNECT target that begins with `:`. `Head.framing` refuses every target that begins with "
+    "`:` (an authority-form target with an empty host, RFC 9112 section 3.3), for any method, so "
+    "the answer is the same on every input")
+
 # (name, file, text to replace, replacement, why it is equivalent or None)
 BUGS = [
     # The head
     ("bare LF ends a line", "Http/Head.lean", "    else if c == 0x0A then none\n",
      "    else if c == 0x0A then some ([], rest)\n", None),
     ("bare CR kept in a line", "Http/Head.lean",
-     "      | d :: rest' => if d == 0x0A then some ([], rest') else none",
-     "      | d :: rest' => if d == 0x0A then some ([], rest') else "
-     "(takeLine rest).map fun p => (c :: p.1, p.2)", BARE_CR),
+     "      | d :: rest' => if d == 0x0A then some (acc.reverse, rest') else none",
+     "      | d :: rest' => if d == 0x0A then some (acc.reverse, rest') else "
+     "takeLineFrom (c :: acc) rest", BARE_CR),
     ("space before colon dropped", "Http/Head.lean", "  let name := line.takeWhile (· != 0x3A)\n",
      "  let name := (line.takeWhile (· != 0x3A)).filter (· != 0x20)\n", None),
     ("trailing whitespace kept", "Http/Head.lean", "  ((v.dropWhile isWs).reverse.dropWhile isWs).reverse",
@@ -120,18 +126,38 @@ BUGS = [
      "List.intercalate []", None),
     # CONNECT
     ("CONNECT rule removed", "Http/Framing.lean", "!h.connectOK || ", "", None),
-    ("CONNECT port up to 65536", "Http/Framing.lean", "decimal (portOf h.target) ≤ 65535",
-     "decimal (portOf h.target) ≤ 65536", None),
-    ("CONNECT port 0 and empty port accepted", "Http/Framing.lean", "1 ≤ decimal (portOf h.target) &&",
-     "0 ≤ decimal (portOf h.target) &&", None),
-    ("CONNECT port 0 accepted", "Http/Framing.lean", "1 ≤ decimal (portOf h.target) &&",
-     "!(portOf h.target).isEmpty &&", None),
-    ("CONNECT port limited to five digits", "Http/Framing.lean", "decimal (portOf h.target) ≤ 65535",
-     "(portOf h.target).length ≤ 5", None),
+    ("CONNECT port up to 65536", "Http/Framing.lean", "decimal ds ≤ 65535 else false",
+     "decimal ds ≤ 65536 else false", None),
+    ("CONNECT port 0 and empty port accepted", "Http/Framing.lean", "then 1 ≤ decimal ds &&",
+     "then 0 ≤ decimal ds &&", None),
+    ("CONNECT port 0 accepted", "Http/Framing.lean", "portInRange (portOf h.target))",
+     "(portInRange (portOf h.target) || (!(portOf h.target).isEmpty && "
+     "(portOf h.target).all (· == 0x30))))", None),
+    ("CONNECT port limited to five digits", "Http/Framing.lean",
+     "then 1 ≤ decimal ds && decimal ds ≤ 65535 else false", "then 1 ≤ decimal ds else false", None),
+    ("CONNECT port leading zeros counted as digits", "Http/Framing.lean",
+     "  let ds := ds.dropWhile (· == 0x30)\n", "", None),
     ("CONNECT method compared case-insensitively", "Http/Framing.lean", "  h.method != connectName ||",
      "  h.method.map lower != connectName.map lower ||", None),
     ("CONNECT target form unchecked", "Http/Framing.lean",
-     "    (Grammar.authorityForm.isMatch h.target && 1 ≤", "    (1 ≤", None),
+     "    (Grammar.connectTarget.isMatch h.target && portInRange", "    (portInRange", None),
+    ("CONNECT target may have an empty host", "Http/Grammar.lean",
+     "def connectTarget : Re := seq [hostNonEmpty, litCI \":\", port]",
+     "def connectTarget : Re := seq [uriHost, litCI \":\", port]", CONNECT_EMPTY_HOST),
+    # An authority-form target with an empty host, and CONNECT content
+    ("empty host allowed in an authority-form target", "Http/Framing.lean",
+     "h.target.head? == some 0x3A || ", "", None),
+    ("CONNECT content accepted", "Http/Framing.lean",
+     " || (h.method == connectName && fr != .length 0)", "", None),
+    ("CONNECT with Content-Length accepted", "Http/Framing.lean",
+     "(h.method == connectName && fr != .length 0)", "(h.method == connectName && fr == .chunked)", None),
+    ("CONNECT content rule in any case of the method", "Http/Framing.lean",
+     "(h.method == connectName && fr != .length 0)",
+     "(h.method.map lower == connectName.map lower && fr != .length 0)", None),
+    # The Host value
+    ("empty host allowed in a Host value", "Http/Grammar.lean",
+     "def hostField : Re := opt (cat hostNonEmpty (opt (cat (litCI \":\") port)))",
+     "def hostField : Re := opt (cat host (opt (cat (litCI \":\") port)))", None),
     ("CONNECT port read from every digit", "Http/Framing.lean",
      "def portOf (t : List UInt8) : List UInt8 := (t.reverse.takeWhile isDigit).reverse",
      "def portOf (t : List UInt8) : List UInt8 := t.filter isDigit", None),

@@ -6,55 +6,62 @@ against the changed tool. A bug is caught when they report failures.
 
 | Bug | File | Failures |
 |-----|------|----------|
-| bare LF ends a line | `Http/Head.lean` | 5095 |
+| bare LF ends a line | `Http/Head.lean` | 6090 |
 | bare CR kept in a line | `Http/Head.lean` | 0, equivalent: the code gives `none` for a CR that is not followed by LF, and the change keeps that CR in the line instead. Every line is then read by parseHead or parseField, and neither accepts a CR: not in the method (a token), the target (no rule of the target grammar has 0x0D), the version (exactly `HTTP/` digit `.` digit), a field name (a token) or a field value (trim removes only SP and HTAB, and isFieldValue allows only field-vchar, SP and HTAB). A line holding a CR is not empty, so it never ends the head. So parseHead gives `none` in both, and on every other input the code is the same |
-| space before colon dropped | `Http/Head.lean` | 8601 |
-| trailing whitespace kept | `Http/Head.lean` | 208009 |
-| NUL allowed in a value | `Http/Head.lean` | 3448 |
-| a double quote in a token | `Http/Head.lean` | 20 |
-| empty lines first not skipped | `Http/Head.lean` | 38826 |
-| minor version digit unchecked | `Http/Head.lean` | 64 |
-| Host not required in HTTP/1.1 | `Http/Framing.lean` | 6405 |
-| two Host lines accepted | `Http/Framing.lean` | 1078 |
+| space before colon dropped | `Http/Head.lean` | 8646 |
+| trailing whitespace kept | `Http/Head.lean` | 206968 |
+| NUL allowed in a value | `Http/Head.lean` | 3433 |
+| a double quote in a token | `Http/Head.lean` | 17 |
+| empty lines first not skipped | `Http/Head.lean` | 38254 |
+| minor version digit unchecked | `Http/Head.lean` | 67 |
+| Host not required in HTTP/1.1 | `Http/Framing.lean` | 5825 |
+| two Host lines accepted | `Http/Framing.lean` | 929 |
 | upper-case field names matched twice | `Http/Framing.lean` | 0, equivalent: on every head that parseHead gives, the only heads the tool frames, it matches the same fields. `n.map (c - 0x20)` is `HOST` for `host`, which the first test already matches. For `content-length` and `transfer-encoding` it turns `-` (0x2D) into CR (0x0D), and a field name is a token, so it never holds a CR. The proof of framing_iff, which covers every Head, would catch it; the tests cannot |
-| any major version accepted | `Http/Framing.lean` | 10077 |
-| first of several Content-Length taken | `Http/Framing.lean` | 4976 |
-| Content-Length and port digits read backwards | `Http/Framing.lean` | 29246 |
-| Transfer-Encoding overrides Content-Length | `Http/Framing.lean` | 2192 |
-| Transfer-Encoding in HTTP/1.0 accepted | `Http/Framing.lean` | 3395 |
-| chunked compared case-sensitively | `Http/Grammar.lean` | 8376 |
-| list: no empty elements before chunked | `Http/Grammar.lean` | 5433 |
-| list: no empty elements after chunked | `Http/Grammar.lean` | 5886 |
-| list: at most one empty element before chunked | `Http/Grammar.lean` | 3359 |
-| list: a tab is not OWS | `Http/Grammar.lean` | 2726 |
-| Transfer-Encoding only as one field line | `Http/Framing.lean` | 3645 |
-| only the first Transfer-Encoding line read | `Http/Framing.lean` | 4753 |
-| Transfer-Encoding lines joined with no comma | `Http/Framing.lean` | 409 |
-| CONNECT rule removed | `Http/Framing.lean` | 3657 |
-| CONNECT port up to 65536 | `Http/Framing.lean` | 237 |
-| CONNECT port 0 and empty port accepted | `Http/Framing.lean` | 784 |
-| CONNECT port 0 accepted | `Http/Framing.lean` | 452 |
-| CONNECT port limited to five digits | `Http/Framing.lean` | 1785 |
-| CONNECT method compared case-insensitively | `Http/Framing.lean` | 678 |
-| CONNECT target form unchecked | `Http/Framing.lean` | 233 |
-| CONNECT port read from every digit | `Http/Framing.lean` | 2671 |
-| http target rule removed | `Http/Framing.lean` | 4061 |
-| userinfo allowed in an http target | `Http/Grammar.lean` | 1098 |
-| empty host allowed in an http target (reg-name star) | `Http/Grammar.lean` | 1332 |
-| scheme compared case-sensitively in the http target grammar | `Http/Grammar.lean` | 3465 |
-| scheme compared case-sensitively in the http and https prefix test | `Http/Framing.lean` | 2008 |
-| CONNECT not exempt from the http target rule | `Http/Framing.lean` | 463 |
-| CONNECT exempt from the http target rule in any case | `Http/Framing.lean` | 179 |
-| https targets not checked | `Http/Framing.lean` | 2033 |
-| a percent escape's second digit unchecked | `Http/Grammar.lean` | 102 |
-| 256 as an IPv4 octet | `Http/Grammar.lean` | 199 |
-| dec-octet 25 then any digit | `Http/Grammar.lean` | 383 |
-| dec-octet 2 then any two digits | `Http/Grammar.lean` | 796 |
-| dec-octet with a leading zero | `Http/Grammar.lean` | 371 |
-| dec-octet as 1*3DIGIT | `Http/Grammar.lean` | 1953 |
-| IP literal with a zone ID | `Http/Grammar.lean` | 2822 |
-| host may be a bare IPv6 address | `Http/Grammar.lean` | 5891 |
-| IPvFuture v case-sensitive | `Http/Grammar.lean` | 4189 |
+| any major version accepted | `Http/Framing.lean` | 17711 |
+| first of several Content-Length taken | `Http/Framing.lean` | 4234 |
+| Content-Length and port digits read backwards | `Http/Framing.lean` | 23606 |
+| Transfer-Encoding overrides Content-Length | `Http/Framing.lean` | 1889 |
+| Transfer-Encoding in HTTP/1.0 accepted | `Http/Framing.lean` | 2891 |
+| chunked compared case-sensitively | `Http/Grammar.lean` | 7112 |
+| list: no empty elements before chunked | `Http/Grammar.lean` | 4546 |
+| list: no empty elements after chunked | `Http/Grammar.lean` | 5047 |
+| list: at most one empty element before chunked | `Http/Grammar.lean` | 2785 |
+| list: a tab is not OWS | `Http/Grammar.lean` | 2335 |
+| Transfer-Encoding only as one field line | `Http/Framing.lean` | 3057 |
+| only the first Transfer-Encoding line read | `Http/Framing.lean` | 3880 |
+| Transfer-Encoding lines joined with no comma | `Http/Framing.lean` | 351 |
+| CONNECT rule removed | `Http/Framing.lean` | 1786 |
+| CONNECT port up to 65536 | `Http/Framing.lean` | 84 |
+| CONNECT port 0 and empty port accepted | `Http/Framing.lean` | 393 |
+| CONNECT port 0 accepted | `Http/Framing.lean` | 209 |
+| CONNECT port limited to five digits | `Http/Framing.lean` | 306 |
+| CONNECT port leading zeros counted as digits | `Http/Framing.lean` | 485 |
+| CONNECT method compared case-insensitively | `Http/Framing.lean` | 549 |
+| CONNECT target form unchecked | `Http/Framing.lean` | 128 |
+| CONNECT target may have an empty host | `Http/Grammar.lean` | 0, equivalent: `hostNonEmpty` and `uriHost` differ only on the empty host, so the change lets through only a CONNECT target that begins with `:`. `Head.framing` refuses every target that begins with `:` (an authority-form target with an empty host, RFC 9112 section 3.3), for any method, so the answer is the same on every input |
+| empty host allowed in an authority-form target | `Http/Framing.lean` | 542 |
+| CONNECT content accepted | `Http/Framing.lean` | 1222 |
+| CONNECT with Content-Length accepted | `Http/Framing.lean` | 828 |
+| CONNECT content rule in any case of the method | `Http/Framing.lean` | 429 |
+| empty host allowed in a Host value | `Http/Grammar.lean` | 4026 |
+| CONNECT port read from every digit | `Http/Framing.lean` | 1234 |
+| http target rule removed | `Http/Framing.lean` | 3624 |
+| userinfo allowed in an http target | `Http/Grammar.lean` | 942 |
+| empty host allowed in an http target (reg-name star) | `Http/Grammar.lean` | 5227 |
+| scheme compared case-sensitively in the http target grammar | `Http/Grammar.lean` | 3003 |
+| scheme compared case-sensitively in the http and https prefix test | `Http/Framing.lean` | 1777 |
+| CONNECT not exempt from the http target rule | `Http/Framing.lean` | 245 |
+| CONNECT exempt from the http target rule in any case | `Http/Framing.lean` | 174 |
+| https targets not checked | `Http/Framing.lean` | 1836 |
+| a percent escape's second digit unchecked | `Http/Grammar.lean` | 90 |
+| 256 as an IPv4 octet | `Http/Grammar.lean` | 159 |
+| dec-octet 25 then any digit | `Http/Grammar.lean` | 320 |
+| dec-octet 2 then any two digits | `Http/Grammar.lean` | 654 |
+| dec-octet with a leading zero | `Http/Grammar.lean` | 357 |
+| dec-octet as 1*3DIGIT | `Http/Grammar.lean` | 1667 |
+| IP literal with a zone ID | `Http/Grammar.lean` | 2582 |
+| host may be a bare IPv6 address | `Http/Grammar.lean` | 1193 |
+| IPvFuture v case-sensitive | `Http/Grammar.lean` | 2936 |
 
 ## The changes
 
@@ -70,8 +77,8 @@ against the changed tool. A bug is caught when they report failures.
 **bare CR kept in a line** in `Http/Head.lean`:
 
 ```
--       | d :: rest' => if d == 0x0A then some ([], rest') else none
-+       | d :: rest' => if d == 0x0A then some ([], rest') else (takeLine rest).map fun p => (c :: p.1, p.2)
+-       | d :: rest' => if d == 0x0A then some (acc.reverse, rest') else none
++       | d :: rest' => if d == 0x0A then some (acc.reverse, rest') else takeLineFrom (c :: acc) rest
 ```
 
 **space before colon dropped** in `Http/Head.lean`:
@@ -249,29 +256,37 @@ against the changed tool. A bug is caught when they report failures.
 **CONNECT port up to 65536** in `Http/Framing.lean`:
 
 ```
-- decimal (portOf h.target) ≤ 65535
-+ decimal (portOf h.target) ≤ 65536
+- decimal ds ≤ 65535 else false
++ decimal ds ≤ 65536 else false
 ```
 
 **CONNECT port 0 and empty port accepted** in `Http/Framing.lean`:
 
 ```
-- 1 ≤ decimal (portOf h.target) &&
-+ 0 ≤ decimal (portOf h.target) &&
+- then 1 ≤ decimal ds &&
++ then 0 ≤ decimal ds &&
 ```
 
 **CONNECT port 0 accepted** in `Http/Framing.lean`:
 
 ```
-- 1 ≤ decimal (portOf h.target) &&
-+ !(portOf h.target).isEmpty &&
+- portInRange (portOf h.target))
++ (portInRange (portOf h.target) || (!(portOf h.target).isEmpty && (portOf h.target).all (· == 0x30))))
 ```
 
 **CONNECT port limited to five digits** in `Http/Framing.lean`:
 
 ```
-- decimal (portOf h.target) ≤ 65535
-+ (portOf h.target).length ≤ 5
+- then 1 ≤ decimal ds && decimal ds ≤ 65535 else false
++ then 1 ≤ decimal ds else false
+```
+
+**CONNECT port leading zeros counted as digits** in `Http/Framing.lean`:
+
+```
+-   let ds := ds.dropWhile (· == 0x30)
+- 
++ 
 ```
 
 **CONNECT method compared case-insensitively** in `Http/Framing.lean`:
@@ -284,8 +299,50 @@ against the changed tool. A bug is caught when they report failures.
 **CONNECT target form unchecked** in `Http/Framing.lean`:
 
 ```
--     (Grammar.authorityForm.isMatch h.target && 1 ≤
-+     (1 ≤
+-     (Grammar.connectTarget.isMatch h.target && portInRange
++     (portInRange
+```
+
+**CONNECT target may have an empty host** in `Http/Grammar.lean`:
+
+```
+- def connectTarget : Re := seq [hostNonEmpty, litCI ":", port]
++ def connectTarget : Re := seq [uriHost, litCI ":", port]
+```
+
+**empty host allowed in an authority-form target** in `Http/Framing.lean`:
+
+```
+- h.target.head? == some 0x3A || 
++ 
+```
+
+**CONNECT content accepted** in `Http/Framing.lean`:
+
+```
+-  || (h.method == connectName && fr != .length 0)
++ 
+```
+
+**CONNECT with Content-Length accepted** in `Http/Framing.lean`:
+
+```
+- (h.method == connectName && fr != .length 0)
++ (h.method == connectName && fr == .chunked)
+```
+
+**CONNECT content rule in any case of the method** in `Http/Framing.lean`:
+
+```
+- (h.method == connectName && fr != .length 0)
++ (h.method.map lower == connectName.map lower && fr != .length 0)
+```
+
+**empty host allowed in a Host value** in `Http/Grammar.lean`:
+
+```
+- def hostField : Re := opt (cat hostNonEmpty (opt (cat (litCI ":") port)))
++ def hostField : Re := opt (cat host (opt (cat (litCI ":") port)))
 ```
 
 **CONNECT port read from every digit** in `Http/Framing.lean`:
