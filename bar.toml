@@ -7,8 +7,9 @@ name = "http"
 status = "in-progress"
 page = "README.md"
 # GitHub handles of everyone who wrote the specification. It was drafted
-# by Claude, an AI agent, for the org.
-spec_authors = ["claude"]
+# by Claude, an AI agent, for the org; its pull requests came from the
+# ahrazzle account (plan #1), and orda-aska carried the review fixes.
+spec_authors = ["claude", "ahrazzle", "orda-aska"]
 # The program people run. A change to it voids the approval.
 entry_points = ["Main.lean"]
 
