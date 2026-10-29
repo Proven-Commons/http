@@ -78,15 +78,16 @@ def Head.httpTargetOK (h : Head) : Bool :=
     !(httpColon.isPrefixOf (h.target.map lower) || httpsColon.isPrefixOf (h.target.map lower)) ||
     Grammar.httpTarget.isMatch h.target
 
-/-- The framing of the body after the head, or `none` when this library
-    refuses the request: a major version other than 1, a missing,
+/-- The framing of the body after the head by the rules of RFC 9112
+    section 6.3, or `none` when this library refuses the request: a
+    major version other than 1, a missing,
     repeated or invalid Host or one with an empty host, a CONNECT with
     an empty host or without a valid port, an http or https target with
     no authority, an empty host or userinfo, Transfer-Encoding together
     with Content-Length, Transfer-Encoding in HTTP/1.0 or with a value
     other than a list of the one coding `chunked`, or Content-Length
     other than one string of digits. -/
-def Head.framing (h : Head) : Option Framing :=
+def Head.framingCore (h : Head) : Option Framing :=
   let hosts := h.fields.filter (·.isNamed hostName)
   if h.major != 1 || hosts.length > 1 || (1 ≤ h.minor && hosts.length != 1) ||
       !hosts.all (fun f => Grammar.hostField.isMatch f.value) then none
@@ -100,5 +101,17 @@ def Head.framing (h : Head) : Option Framing :=
       if 1 ≤ h.minor && Grammar.chunkedList.isMatch (List.intercalate [0x2C] ((t :: ts).map (·.value)))
       then some .chunked else none
     | _, _ => none
+
+/-- The framing of the body after the head, or `none` when this library
+    refuses the request: when `framingCore` refuses it, when the target
+    begins with `:`, which in a `request-target` is an authority-form
+    target with an empty host, and when a CONNECT has content, that is
+    Transfer-Encoding or a Content-Length that is not 0. -/
+def Head.framing (h : Head) : Option Framing :=
+  match h.framingCore with
+  | none => none
+  | some fr =>
+    if h.target.head? == some 0x3A || (h.method == connectName && fr != .length 0) then none
+    else some fr
 
 end Http

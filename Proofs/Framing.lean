@@ -253,13 +253,15 @@ private theorem target_cond_iff (h : Head) :
     (!h.connectOK || !h.httpTargetOK) = false ↔ Spec.ConnectOK h ∧ Spec.HttpTargetOK h := by
   rw [Bool.or_eq_false_iff, Bool.not_eq_false', Bool.not_eq_false', connectOK_iff, httpTargetOK_iff]
 
-theorem framing_iff (h : Head) (fr : Framing) : h.framing = some fr ↔ Spec.Accepts h fr := by
+theorem framingCore_iff (h : Head) (fr : Framing) :
+    h.framingCore = some fr ↔
+      h.major = 1 ∧ Spec.HostOK h ∧ Spec.ConnectOK h ∧ Spec.HttpTargetOK h ∧ Spec.FramedAs h fr := by
   have eh : Spec.named h "host" = h.fields.filter (·.isNamed hostName) := named_eq h "host"
   have et : Spec.named h "transfer-encoding" = h.fields.filter (·.isNamed transferEncodingName) :=
     named_eq h "transfer-encoding"
   have ec : Spec.named h "content-length" = h.fields.filter (·.isNamed contentLengthName) :=
     named_eq h "content-length"
-  unfold Head.framing Spec.Accepts Spec.HostOK
+  unfold Head.framingCore Spec.HostOK
   rw [ite_none_iff, cond_iff, ite_none_iff, target_cond_iff, and_assoc, eh]
   apply and_congr_right
   intro _
@@ -287,12 +289,42 @@ theorem framing_iff (h : Head) (fr : Framing) : h.framing = some fr ↔ Spec.Acc
       simp [← digits_iff, decimalFast_eq]
     all_goals (intros; exact eq_comm)
 
+theorem framing_iff (h : Head) (fr : Framing) : h.framing = some fr ↔ Spec.Accepts h fr := by
+  have ec : Spec.ascii "CONNECT" = connectName := rfl
+  unfold Head.framing Spec.Accepts Spec.AuthorityHostOK Spec.ConnectNoContent
+  rw [ec]
+  constructor
+  · intro hf
+    cases hc : h.framingCore with
+    | none => rw [hc] at hf; cases hf
+    | some fr' =>
+      rw [hc] at hf
+      simp only at hf
+      split at hf
+      · cases hf
+      · rename_i hcond
+        cases hf
+        obtain ⟨a, b, c, d, e⟩ := (framingCore_iff h _).1 hc
+        simp only [Bool.or_eq_true, beq_iff_eq, Bool.and_eq_true, bne_iff_ne, ne_eq, not_or,
+          not_and, Decidable.not_not] at hcond
+        exact ⟨a, b, c, d, hcond.1, hcond.2, e⟩
+  · rintro ⟨a, b, c, d, e, g, f⟩
+    rw [(framingCore_iff h fr).2 ⟨a, b, c, d, f⟩]
+    simp only
+    split
+    · rename_i hcond
+      simp only [Bool.or_eq_true, beq_iff_eq, Bool.and_eq_true, bne_iff_ne, ne_eq] at hcond
+      rcases hcond with h1 | ⟨h2, h3⟩
+      · exact absurd h1 e
+      · exact absurd (g h2) h3
+    · rfl
+
 theorem framing_te_cl (h : Head) (hte : Spec.named h "transfer-encoding" ≠ [])
     (hcl : Spec.named h "content-length" ≠ []) : h.framing = none := by
   cases hf : h.framing with
   | none => rfl
   | some fr =>
-    have ⟨_, _, _, _, hfr⟩ := (framing_iff h fr).1 hf
+    have ⟨_, _, _, _, _, _, hfr⟩ := (framing_iff h fr).1 hf
     cases fr with
     | chunked => exact absurd hfr.2.1 hcl
     | length n => exact absurd hfr.1 hte
@@ -302,7 +334,7 @@ theorem framing_two_cl (h : Head) (h2 : 2 ≤ (Spec.named h "content-length").le
   cases hf : h.framing with
   | none => rfl
   | some fr =>
-    have ⟨_, _, _, _, hfr⟩ := (framing_iff h fr).1 hf
+    have ⟨_, _, _, _, _, _, hfr⟩ := (framing_iff h fr).1 hf
     cases fr with
     | chunked => rw [hfr.2.1] at h2; simp at h2
     | length n =>

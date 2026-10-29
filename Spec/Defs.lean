@@ -172,6 +172,23 @@ URI, then a client MUST send a Host header field with an empty field
 value", and section 3.3 says that then "the server can reject the
 request or determine whether a configured default applies".
 
+The same section gives the target URI of an authority-form target for
+any method, not only CONNECT: "If the request-target is in
+authority-form, the target URI's authority component is the
+request-target". So `GET :80` and `OPTIONS :` also have a target URI
+with an empty host, and are refused. In a `request-target`, a target
+that begins with `:` is exactly such a target: origin-form begins with
+`/`, absolute-form with a scheme, which begins with ALPHA, and
+asterisk-form is `*`.
+
+RFC 9110, section 9.3.6: "A CONNECT request message does not have
+content." RFC 9112 section 6.3 would give a CONNECT with Content-Length
+or Transfer-Encoding a body, and parsers differ on what they do with
+those octets: some read them as a body, others pass them to the tunnel.
+Here a CONNECT with Transfer-Encoding, or with a Content-Length that is
+not 0, is refused. A server need not accept CONNECT at all (section
+9.3.6: "An origin server MAY accept a CONNECT request").
+
 RFC 9110, section 5.2: when a field name is repeated, "its combined
 field value consists of the list of corresponding field line values
 within that section, concatenated in order, with each field line value
@@ -257,6 +274,16 @@ def Spec.HttpTargetOK (h : Head) : Prop :=
     (Spec.ascii "http:" <+: h.target.map Spec.lower ∨ Spec.ascii "https:" <+: h.target.map Spec.lower) →
       Spec.Matches Spec.httpTarget h.target
 
+/-- The target is not an authority-form target with an empty host: it
+    does not begin with `:` (RFC 9112 section 3.3, RFC 9110 section
+    4.2.1). -/
+def Spec.AuthorityHostOK (h : Head) : Prop := h.target.head? ≠ some 0x3A
+
+/-- A CONNECT has no content (RFC 9110, section 9.3.6): its body, as
+    `fr` frames it, has length 0. -/
+def Spec.ConnectNoContent (h : Head) (fr : Framing) : Prop :=
+  h.method = Spec.ascii "CONNECT" → fr = .length 0
+
 /-- The combined field value of the field lines `fs` (RFC 9110, section
     5.2): their values in order, separated by commas. -/
 def Spec.combined (fs : List Field) : List UInt8 := List.intercalate [0x2C] (fs.map (·.value))
@@ -275,4 +302,5 @@ def Spec.FramedAs (h : Head) : Framing → Prop
 
 /-- This library accepts the head, and frames its body as `fr`. -/
 def Spec.Accepts (h : Head) (fr : Framing) : Prop :=
-  h.major = 1 ∧ Spec.HostOK h ∧ Spec.ConnectOK h ∧ Spec.HttpTargetOK h ∧ Spec.FramedAs h fr
+  h.major = 1 ∧ Spec.HostOK h ∧ Spec.ConnectOK h ∧ Spec.HttpTargetOK h ∧ Spec.AuthorityHostOK h ∧
+    Spec.ConnectNoContent h fr ∧ Spec.FramedAs h fr

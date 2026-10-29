@@ -9,9 +9,10 @@ field lines and the request target, then the Host rule of RFC 9112
 section 3.2, the CONNECT rule of RFC 9110 section 9.3.6, the rule of
 RFC 9110 sections 4.2.1, 4.2.2 and 4.2.4 for http and https targets, the
 rule of RFC 9112 section 3.3 that the host of the target URI built from
-a Host value or a CONNECT target is not empty, and the framing rules of
-RFC 9112 section 6.3, with the choices the Lean spec makes (see
-SPEC.md). Transfer-Encoding is read as one list made of all its field
+a Host value or an authority-form target, for any method, is not empty,
+the framing rules of RFC 9112 section 6.3, and the rule of RFC 9110
+section 9.3.6 that a CONNECT has no content, with the choices the Lean
+spec makes (see SPEC.md). Transfer-Encoding is read as one list made of all its field
 lines (RFC 9110 section 5.2), in which empty elements do not count
 (section 5.6.1.2). The IPv6 rule of RFC 3986 is also checked against
 Python's `ipaddress`, as a test of the oracle itself.
@@ -36,7 +37,8 @@ Inputs come from a recorded seed:
 - CONNECT, and `connect`, which is another method, with host and port
   targets whose port is empty, 0, above 65535, long or with leading
   zeros, with an empty host, such as `:443`, and with targets of the
-  other three forms;
+  other three forms; CONNECT with Content-Length or Transfer-Encoding;
+  and authority-form targets with an empty host for other methods;
 - http and https targets, with the scheme in any case: with a host
   (registered names and IP literals, ports, paths and queries), with an
   empty host such as `http:///a`, with no `//` such as `http:/a`, with
@@ -317,20 +319,31 @@ def framing(head):
         return None
     if not http_target_ok(method, target):
         return None
+    # RFC 9112, section 3.3: an authority-form target is the authority of
+    # the target URI for any method, and RFC 9110, section 4.2.1, says an
+    # empty host is invalid. Such a target starts with ":".
+    if target.startswith(b":"):
+        return None
     te, cl = named(b"transfer-encoding"), named(b"content-length")
     if te and cl:
         return None
     if te:
         if minor < 1 or not CHUNKED_ALONE.fullmatch(combined(te)):
             return None
-        return "chunked"
-    if cl:
+        fr = "chunked"
+    elif cl:
         if len(cl) != 1 or not re.fullmatch(rb"[0-9]+", cl[0]):
             return None
         # The number the digits write, in decimal: the digits without
         # their leading zeros. int() is not given very long strings.
-        return f"length {cl[0].lstrip(b'0').decode() or '0'}"
-    return "length 0"
+        fr = f"length {cl[0].lstrip(b'0').decode() or '0'}"
+    else:
+        fr = "length 0"
+    # RFC 9110, section 9.3.6: "A CONNECT request message does not have
+    # content." Refused here when it would have some.
+    if method == b"CONNECT" and fr != "length 0":
+        return None
+    return fr
 
 
 def printed(head):
@@ -783,9 +796,13 @@ FIXED = [
     b"OPTIONS * HTTP/1.1\r\nHost: www.example.org:8001\r\n\r\n",
     b"OPTIONS http://www.example.org:8001 HTTP/1.1\r\nHost: www.example.org:8001\r\n\r\n",
     b"GET /pub/WWW/ HTTP/1.1\r\nHost: www.example.org\r\n\r\n",
-    # Spec.head_vectors: a body, and chunked in any case
+    # Spec.head_vectors: a body, and chunked in any case, after a tab or
+    # two spaces, and with a parameter
     b"POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello",
     b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: Chunked\r\n\r\n",
+    b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding:\tchunked\r\n\r\n",
+    b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding:  chunked\r\n\r\n",
+    b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked;a=b\r\n\r\n",
     # RFC 9112, section 6.1
     b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: gzip, chunked\r\n\r\n",
     # RFC 9110, section 5.6.1.2: lists with empty elements, one line or
@@ -911,6 +928,22 @@ FIXED = [
     b"connect :80 HTTP/1.1\r\nHost: a\r\n\r\n",
     b"connect a: HTTP/1.1\r\nHost: a\r\n\r\n",
     b"Connect / HTTP/1.1\r\nHost: a\r\n\r\n",
+    # An authority-form target with an empty host, for any method (RFC
+    # 9112, section 3.3). The first two are in Spec.head_vectors.
+    b"GET :80 HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"OPTIONS : HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"OPTIONS :443 HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"POST :80 HTTP/1.1\r\nHost: a\r\nContent-Length: 1\r\n\r\nx",
+    b"GET :80 HTTP/1.0\r\n\r\n",
+    b"GET a:80 HTTP/1.1\r\nHost: a\r\n\r\n",
+    # A CONNECT has no content (RFC 9110, section 9.3.6). The first three
+    # are in Spec.head_vectors.
+    b"CONNECT a:443 HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello",
+    b"CONNECT a:443 HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n",
+    b"CONNECT a:443 HTTP/1.1\r\nHost: a\r\nContent-Length: 0\r\n\r\n",
+    b"CONNECT a:443 HTTP/1.1\r\nHost: a\r\nContent-Length: 000\r\n\r\n",
+    b"CONNECT a:443 HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: ,\r\n\r\n",
+    b"connect a:443 HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello",
     # RFC 9110, sections 4.2.1, 4.2.2 and 4.2.4: http and https targets,
     # with the scheme in any case (RFC 3986, section 3.1). First the
     # inputs of Spec.head_vectors.
