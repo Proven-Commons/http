@@ -1,0 +1,19 @@
+{
+  "challenge_module": "Spec",
+  "solution_module": "Proofs",
+  "theorem_names": [
+    "Spec.isMatch_iff",
+    "Spec.parseHead_iff",
+    "Spec.print_eq",
+    "Spec.parseHead_print",
+    "Spec.framing_iff",
+    "Spec.framing_te_cl",
+    "Spec.framing_two_cl",
+    "Spec.head_vectors"
+  ],
+  "permitted_axioms": [
+    "propext",
+    "Quot.sound",
+    "Classical.choice"
+  ]
+}

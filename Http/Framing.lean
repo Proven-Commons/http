@@ -1,0 +1,117 @@
+/-
+  Whether this library accepts a request head, and how the body after it
+  is framed (RFC 9112, sections 3.2, 6.1 and 6.3, and RFC 9110, sections
+  4.2, 5.2, 5.6.1.2 and 9.3.6).
+-/
+
+import Http.Head
+
+namespace Http
+
+/-- ASCII lower case. -/
+def lower (c : UInt8) : UInt8 := if 0x41 ≤ c && c ≤ 0x5A then c + 0x20 else c
+
+/-- Whether the field's name, without regard to ASCII case, is `n`,
+    given in lower case. -/
+def Field.isNamed (f : Field) (n : List UInt8) : Bool := f.name.map lower == n
+
+/-- The number a string of decimal digits writes, one digit at a time.
+    Each step takes time that grows with the number so far, so the time
+    grows with the square of the number of digits. -/
+def decimal (ds : List UInt8) : Nat := ds.foldl (fun n d => 10 * n + (d.toNat - 0x30)) 0
+
+/-- `decimal` of the `n` digits `ds`, by halves, for at most `fuel`
+    levels: the number that `hi ++ lo` writes is the number `hi` writes
+    times 10 to the length of `lo`, plus the number `lo` writes. Up to 18
+    digits are read one at a time. -/
+def decimalBy : Nat → Nat → List UInt8 → Nat
+  | 0, _, ds => decimal ds
+  | fuel + 1, n, ds =>
+    if n ≤ 18 then decimal ds
+    else
+      let (hi, lo) := ds.splitAt (n / 2)
+      decimalBy fuel (n / 2) hi * 10 ^ (n - n / 2) + decimalBy fuel (n - n / 2) lo
+
+/-- The number a string of decimal digits writes, read by halves, so
+    that the work is in multiplications of large numbers, not in one
+    step per digit. -/
+def decimalFast (ds : List UInt8) : Nat := decimalBy ds.length ds.length ds
+
+/-- Whether a string of decimal digits writes a number from 1 to 65535.
+    After the leading zeros, more than five digits write 100000 or more,
+    so at most five digits are converted. -/
+def portInRange (ds : List UInt8) : Bool :=
+  let ds := ds.dropWhile (· == 0x30)
+  if ds.length ≤ 5 then 1 ≤ decimal ds && decimal ds ≤ 65535 else false
+
+/-- `host`, `content-length` and `transfer-encoding`. -/
+def hostName : List UInt8 := [0x68, 0x6F, 0x73, 0x74]
+def contentLengthName : List UInt8 :=
+  [0x63, 0x6F, 0x6E, 0x74, 0x65, 0x6E, 0x74, 0x2D, 0x6C, 0x65, 0x6E, 0x67, 0x74, 0x68]
+def transferEncodingName : List UInt8 :=
+  [0x74, 0x72, 0x61, 0x6E, 0x73, 0x66, 0x65, 0x72, 0x2D, 0x65, 0x6E, 0x63, 0x6F, 0x64, 0x69, 0x6E,
+    0x67]
+
+/-- `CONNECT`. -/
+def connectName : List UInt8 := [0x43, 0x4F, 0x4E, 0x4E, 0x45, 0x43, 0x54]
+
+/-- The digits at the end of `t`: in an authority-form target, its port. -/
+def portOf (t : List UInt8) : List UInt8 := (t.reverse.takeWhile isDigit).reverse
+
+/-- Whether the head keeps the rule of RFC 9110 section 9.3.6 for
+    CONNECT: its target is `uri-host ":" port`, with a host that is not
+    empty and a port from 1 to 65535. Any other method keeps it. -/
+def Head.connectOK (h : Head) : Bool :=
+  h.method != connectName ||
+    (Grammar.connectTarget.isMatch h.target && portInRange (portOf h.target))
+
+/-- `http:` and `https:`. -/
+def httpColon : List UInt8 := [0x68, 0x74, 0x74, 0x70, 0x3A]
+def httpsColon : List UInt8 := [0x68, 0x74, 0x74, 0x70, 0x73, 0x3A]
+
+/-- Whether the head keeps the rule of RFC 9110 sections 4.2.1, 4.2.2 and
+    4.2.4: a target whose scheme is http or https, in any case, is such a
+    URI with a host that is not empty and no userinfo. A CONNECT target
+    is in authority-form, which has no scheme, so a CONNECT keeps it. -/
+def Head.httpTargetOK (h : Head) : Bool :=
+  h.method == connectName ||
+    !(httpColon.isPrefixOf (h.target.map lower) || httpsColon.isPrefixOf (h.target.map lower)) ||
+    Grammar.httpTarget.isMatch h.target
+
+/-- The framing of the body after the head by the rules of RFC 9112
+    section 6.3, or `none` when this library refuses the request: a
+    major version other than 1, a missing,
+    repeated or invalid Host or one with an empty host, a CONNECT with
+    an empty host or without a valid port, an http or https target with
+    no authority, an empty host or userinfo, Transfer-Encoding together
+    with Content-Length, Transfer-Encoding in HTTP/1.0 or with a value
+    other than a list of the one coding `chunked`, or Content-Length
+    other than one string of digits. -/
+def Head.framingCore (h : Head) : Option Framing :=
+  let hosts := h.fields.filter (·.isNamed hostName)
+  if h.major != 1 || hosts.length > 1 || (1 ≤ h.minor && hosts.length != 1) ||
+      !hosts.all (fun f => Grammar.hostField.isMatch f.value) then none
+  else if !h.connectOK || !h.httpTargetOK then none
+  else
+    match h.fields.filter (·.isNamed transferEncodingName),
+        h.fields.filter (·.isNamed contentLengthName) with
+    | [], [] => some (.length 0)
+    | [], [f] => if !f.value.isEmpty && f.value.all isDigit then some (.length (decimalFast f.value)) else none
+    | t :: ts, [] =>
+      if 1 ≤ h.minor && Grammar.chunkedList.isMatch (List.intercalate [0x2C] ((t :: ts).map (·.value)))
+      then some .chunked else none
+    | _, _ => none
+
+/-- The framing of the body after the head, or `none` when this library
+    refuses the request: when `framingCore` refuses it, when the target
+    begins with `:`, which in a `request-target` is an authority-form
+    target with an empty host, and when a CONNECT has content, that is
+    Transfer-Encoding or a Content-Length that is not 0. -/
+def Head.framing (h : Head) : Option Framing :=
+  match h.framingCore with
+  | none => none
+  | some fr =>
+    if h.target.head? == some 0x3A || (h.method == connectName && fr != .length 0) then none
+    else some fr
+
+end Http

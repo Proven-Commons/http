@@ -1,0 +1,37 @@
+# Read by bar/check.py in Proven-Commons/mission.
+# See playbook/verified-bar.md there for what each field means.
+
+[project]
+name = "http"
+# "in-progress" until every bar item passes, then "verified".
+status = "in-progress"
+page = "README.md"
+# GitHub handles of everyone who wrote the specification. It was drafted
+# by Claude, an AI agent, for the org; its pull requests came from the
+# ahrazzle account (plan #1), and orda-aska carried the review fixes.
+spec_authors = ["claude", "ahrazzle", "orda-aska"]
+# The program people run. A change to it voids the approval.
+entry_points = ["Main.lean"]
+
+[spec]
+# Http/Types.lean and Http/Abnf.lean hold the types the statements are
+# about, and the notation the grammar is written in, so they are part of
+# the specification.
+files = [
+  "SPEC.md", "Spec.lean", "Spec/Abnf.lean", "Spec/Rules.lean", "Spec/Defs.lean",
+  "Http/Types.lean", "Http/Abnf.lean",
+]
+# The code under proof: the functions the statements are about.
+code = ["Http.Re.isMatch", "Http.parseHead", "Http.Head.print", "Http.Head.framing"]
+
+# One entry per approval, added in a pull request the reviewer approves.
+# [[spec.approval]]
+# reviewer = "github-handle"
+# date = "2026-11-02"
+# sha256 = "..."
+# record = "https://github.com/Proven-Commons/http/pull/<n>"
+
+[tests]
+results = "tests/TEST-RESULTS.md"
+command = "python3 tests/run_tests.py"
+files = ["tests/run_tests.py", "tests/planted_bugs.py"]
