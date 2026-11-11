@@ -1,0 +1,15 @@
+[project]
+name = "http"
+status = "in-progress"
+page = "README.md"
+spec_authors = ["ahrazzle"]
+entry_points = ["Main.lean"]
+
+[spec]
+files = ["SPEC.md", "Http/Types.lean", "Http/Spec/Defs.lean", "Http/Spec.lean"]
+code = ["Http.Types", "Http.Framing", "Http"]
+
+[tests]
+results = "tests/TEST-RESULTS.md"
+command = ["python3", "tests/run_tests.py"]
+files = ["tests/run_tests.py", "tests/planted_bugs.py", "tests/PLANTED-BUGS.md"]
