@@ -44,8 +44,11 @@ theorem Spec.parseHead_print (h : Head) (rest : List UInt8) (hv : Spec.HeadValid
 /-- `framing` decides which heads this library accepts, by the version,
     the Host rule of RFC 9112 section 3.2, the CONNECT rule of RFC 9110
     section 9.3.6, the rule of RFC 9110 section 4.2 for http and https
-    targets, and RFC 9112 section 6.3 with the choices in
-    `Spec/Defs.lean`, and how it frames the body. -/
+    targets, the empty-host rule for an authority-form target (RFC 9112
+    section 3.3, then RFC 9110 section 4.2.1: a target that begins with
+    `:`), no content on CONNECT (RFC 9110 section 9.3.6: Transfer-Encoding,
+    or a Content-Length that is not 0), and RFC 9112 section 6.3 with the
+    choices in `Spec/Defs.lean`, and how it frames the body. -/
 theorem Spec.framing_iff (h : Head) (fr : Framing) : h.framing = some fr ↔ Spec.Accepts h fr :=
   Proofs.Framing.framing_iff h fr
 

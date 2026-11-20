@@ -84,7 +84,7 @@ This project has no dependencies beyond Lean itself.
 
 `tests/CROSS-CHECK.md` records a one-off comparison with Node's built-in server, which uses llhttp in its default strict mode, with Go's `net/http` server, and with Python's `h11`. It is not part of the verified bar.
 
-This comparison was run before the rules for an empty host in authority-form and for CONNECT content were added, so on those inputs the verdicts it records for this project are the old ones. Each parser was sent all the heads in the first 6000 inputs of the differential tests. The other inputs are malformed requests to the tool. A parser accepts a head when it reads it and passes the request on. After a head this project accepts, the body it frames is sent: the whole body for a Content-Length up to 1,000,000, and a chunked body with 5 octets of data. After a head with a Content-Length above 1,000,000, no body is sent. `tests/CROSS-CHECK.md` records how many heads each parser gives the same verdict on, and that where both accept and the lengths can be compared, the body lengths agree every time. The lengths are not compared for heads with a Content-Length above 1,000,000, nor for CONNECT heads, where Node reads what follows as a tunnel. A CONNECT with content is now refused here, so that difference no longer gives a body to one parser and a tunnel to the other.
+Each parser was sent all the heads in the first 6000 inputs of the differential tests, including authority-form targets with an empty host and CONNECT requests that carry content. The other inputs are malformed requests to the tool. A parser accepts a head when it reads it and passes the request on. After a head this project accepts, the body it frames is sent: the whole body for a Content-Length up to 1,000,000, and a chunked body with 5 octets of data. After a head with a Content-Length above 1,000,000, no body is sent, and nothing is sent after a head this project rejects. `tests/CROSS-CHECK.md` records how many heads each parser gives the same verdict on, and that where both accept and the lengths can be compared, the body lengths agree every time. The lengths are not compared for heads with a Content-Length above 1,000,000, nor for CONNECT heads this project accepts, where Node reads what follows as a tunnel. A CONNECT with content is refused here, so that head is not given a body for one parser and a tunnel for the other.
 
 The main differences are below. `tests/CROSS-CHECK.md` lists them all, with counts and examples.
 
@@ -95,6 +95,7 @@ The main differences are below. `tests/CROSS-CHECK.md` lists them all, with coun
   - They accept Transfer-Encoding in HTTP/1.0, which RFC 9112 section 6.1 says a server MUST treat "as if the framing is faulty".
   - They reject Transfer-Encoding lists with empty elements, such as `chunked,`. RFC 9110 section 5.6.1.2 says a recipient MUST accept them.
   - They accept an `http` or `https` target with an empty host, such as `http://` or `http:///a`, which RFC 9110 sections 4.2.1 and 4.2.2 say a recipient that processes it MUST reject. They also accept one with userinfo, such as `http://u@a/`, which section 4.2.4 says a recipient SHOULD treat as an error. Go and h11 also accept one with no `//`, such as `http:`. Node rejects that, but it rejects every absolute-form target with no authority.
+  - They accept a CONNECT that has content, `Content-Length: 5` or `Transfer-Encoding: chunked`. RFC 9110 section 9.3.6 says a CONNECT request message does not have content, and this library refuses it. Node then reads what follows as a tunnel, and Go reads it as a body.
 - **Node:**
   - Repairs the RFC allows: other whitespace in the request line, such as `GET  /a`, and a bare LF before the request line.
   - It rejects requests the RFC says to accept: an absolute-form target with no authority, such as `x:`, or with a digit, `+`, `-` or `.` in its scheme (RFC 9112 section 3.2.2: a server MUST accept the absolute-form), and HTTP/1.2 to 1.9 (RFC 9110 section 6.2: SHOULD process it as 1.1). It also rejects a tab after a Content-Length or Transfer-Encoding value, though that tab is optional whitespace, not part of the value.
@@ -108,7 +109,7 @@ The main differences are below. `tests/CROSS-CHECK.md` lists them all, with coun
   - Repairs the RFC allows: a bare LF, a folded line, a Content-Length list of equal values such as `5, 5`, two equal Content-Length lines, and Transfer-Encoding with Content-Length, which it reads as chunked.
   - It rejects requests the RFC says to accept: empty lines before the request line, even a single CRLF.
   - It accepts requests the RFC says to refuse: no Host in HTTP/1.2 to 1.9. RFC 9112 section 3.2 requires a Host in HTTP/1.1, and RFC 9110 section 6.2 asks a server to handle a later 1.x as 1.1.
-  - Other choices: it accepts HTTP/2.0 and HTTP/0.9, a bad percent-escape such as `/%4g`, and control octets in a field line.
+  - Other choices: it accepts HTTP/2.0 and HTTP/0.9, a bad percent-escape such as `/%4g`, control octets in a field line, and an authority-form target with an empty host, such as `GET :80`. Node and Go refuse that target for a method other than CONNECT.
 
 ## Re-check it
 

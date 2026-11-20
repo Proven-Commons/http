@@ -86,7 +86,10 @@ def Head.httpTargetOK (h : Head) : Bool :=
     no authority, an empty host or userinfo, Transfer-Encoding together
     with Content-Length, Transfer-Encoding in HTTP/1.0 or with a value
     other than a list of the one coding `chunked`, or Content-Length
-    other than one string of digits. -/
+    other than one string of digits. This is not the whole refusal list.
+    `Head.framing` also refuses a target that begins with `:`, an
+    authority-form target with an empty host, and a CONNECT that has
+    content. -/
 def Head.framingCore (h : Head) : Option Framing :=
   let hosts := h.fields.filter (·.isNamed hostName)
   if h.major != 1 || hosts.length > 1 || (1 ≤ h.minor && hosts.length != 1) ||

@@ -255,6 +255,8 @@ VALUE_TAB = "a tab after a Content-Length or Transfer-Encoding value"
 CL_ZEROS = "a Content-Length with leading zeros"
 OBS_TEXT = "obs-text in a field value"
 EMPTY_HOST = "an empty Host"
+EMPTY_AUTHORITY = "an authority-form target with an empty host"
+CONNECT_CONTENT = "CONNECT with content"
 
 
 def te_reason(te):
@@ -433,6 +435,12 @@ def features(bs):
     if reason:
         yield REJECTED, reason
         return
+    # RFC 9112 section 3.3, then RFC 9110 section 4.2.1: in a request-target,
+    # a target that begins with ":" is an authority-form target with an empty
+    # host, for any method. A CONNECT with an empty host was refused above.
+    if target.startswith(b":"):
+        yield REJECTED, EMPTY_AUTHORITY
+        return
     # RFC 9112, sections 3.2.2 to 3.2.4
     # A CONNECT target that got this far is a host and port, read as the
     # authority-form even when it also fits absolute-URI, such as `a:1`.
@@ -484,6 +492,12 @@ def features(bs):
             reason = "a Host value with a bad IP literal"
         else:
             reason = "another Host value outside RFC 3986"
+    # RFC 9110, section 9.3.6: "A CONNECT request message does not have
+    # content." The branches above have already refused Transfer-Encoding
+    # that is not the one coding chunked, and a Content-Length that is not
+    # one run of digits. What remains is chunked, or digits other than 0.
+    elif method == b"CONNECT" and (te or (cl and cl[0].lstrip(b"0") != b"")):
+        reason = CONNECT_CONTENT
     if reason:
         yield REJECTED, reason
         return
