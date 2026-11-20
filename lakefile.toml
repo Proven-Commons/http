@@ -1,19 +1,17 @@
 name = "http"
 version = "0.1.0"
 license = "Apache-2.0"
-defaultTargets = ["Http", "http-tool"]
+defaultTargets = ["Http", "Spec", "Proofs", "httphead"]
 
 [[lean_lib]]
 name = "Http"
 
 [[lean_lib]]
-name = "HttpSpec"
-roots = ["Http.Spec"]
+name = "Spec"
 
 [[lean_lib]]
-name = "HttpProofs"
-roots = ["Http.Proofs"]
+name = "Proofs"
 
 [[lean_exe]]
-name = "http-tool"
+name = "httphead"
 root = "Main"

@@ -1,29 +1,43 @@
+# Read by bar/check.py in Proven-Commons/mission.
+# See playbook/verified-bar.md there for what each field means.
+
 [project]
 name = "http"
+# "in-progress" until every bar item passes, then "verified".
 status = "in-progress"
 page = "README.md"
-spec_authors = ["ahrazzle"]
+# GitHub handles of everyone who wrote the specification. It was drafted
+# by Claude, an AI agent, for the org; its pull requests came from the
+# ahrazzle account (plan #1), and orda-aska carried the review fixes.
+spec_authors = ["claude", "ahrazzle", "orda-aska"]
+# The program people run. A change to it voids the approval.
 entry_points = ["Main.lean"]
 
 [spec]
-files = ["SPEC.md", "Http/Types.lean", "Http/Spec/Defs.lean", "Http/Spec.lean"]
-code = [
-  "Http.splitCRLF",
-  "Http.parseDec",
-  "Http.natToDecChars",
-  "Http.parseHex",
-  "Http.natToHexLower",
-  "Http.determineFraming",
-  "Http.normalizedCodings",
-  "Http.lowerBytes",
-  "Http.decodeChunked",
-  "Http.encodeChunked",
-  "Http.serializeFixed",
-  "Http.serializeChunked",
-  "Http.parseRequest",
+# Http/Types.lean and Http/Abnf.lean hold the types the statements are
+# about, and the notation the grammar is written in, so they are part of
+# the specification.
+files = [
+  "SPEC.md", "Spec.lean", "Spec/Abnf.lean", "Spec/Rules.lean", "Spec/Defs.lean",
+  "Http/Types.lean", "Http/Abnf.lean",
 ]
+# The code under proof: the functions the statements are about.
+code = [
+  "Http.Re.isMatch", "Http.parseHead", "Http.Head.print", "Http.Head.framing",
+  "Http.determineFraming", "Http.Field.isNamed", "Http.contentLengthName",
+  "Http.transferEncodingName", "Http.connectName", "Http.Grammar.chunkedList",
+  "Http.decodeChunked", "Http.encodeChunked", "Http.parseRequest", "Http.maxUInt64",
+  "Http.FramedRequest", "Http.FramedRequest.mk", "Http.StreamFrames",
+]
+
+# One entry per approval, added in a pull request the reviewer approves.
+# [[spec.approval]]
+# reviewer = "github-handle"
+# date = "2026-11-02"
+# sha256 = "..."
+# record = "https://github.com/Proven-Commons/http/pull/<n>"
 
 [tests]
 results = "tests/TEST-RESULTS.md"
 command = "python3 tests/run_tests.py"
-files = ["tests/run_tests.py"]
+files = ["tests/run_tests.py", "tests/planted_bugs.py"]

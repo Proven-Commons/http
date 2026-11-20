@@ -1,43 +1,34 @@
+/-
+  What a request head is, and how its body is framed. Part of the
+  approved specification, with `Spec.lean`, since the statements are
+  about these types.
+-/
+
 namespace Http
 
-inductive Version where
-  | http10
-  | http11
-  deriving DecidableEq, Repr
-
-structure Header where
+/-- A field line: its name and its value, as octets, the value without
+    the optional whitespace around it. -/
+structure Field where
   name : List UInt8
   value : List UInt8
   deriving DecidableEq, Repr
 
-structure RequestHead where
+/-- A request head: the request line, `method SP request-target SP
+    HTTP-version`, with the version's two digits as numbers, and the
+    field lines in order. -/
+structure Head where
   method : List UInt8
   target : List UInt8
-  version : Version
-  headers : List Header
+  major : Nat
+  minor : Nat
+  fields : List Field
   deriving DecidableEq, Repr
 
+/-- How the body after a head is delimited: by a length in octets, which
+    is 0 when there is no body, or by the chunked transfer coding. -/
 inductive Framing where
-  | fixed (len : Nat)
+  | length (n : Nat)
   | chunked
   deriving DecidableEq, Repr
-
-structure FramedRequest where
-  head : RequestHead
-  body : List UInt8
-  rest : List UInt8
-  deriving DecidableEq, Repr
-
-def maxUInt64 : Nat := 2 ^ 64 - 1
-
-def teNameLower : List UInt8 := [116, 114, 97, 110, 115, 102, 101, 114, 45, 101, 110, 99, 111, 100, 105, 110, 103]
-
-def clNameLower : List UInt8 := [99, 111, 110, 116, 101, 110, 116, 45, 108, 101, 110, 103, 116, 104]
-
-def hostNameLower : List UInt8 := [104, 111, 115, 116]
-
-def chunkedToken : List UInt8 := [99, 104, 117, 110, 107, 101, 100]
-
-def connectName : List UInt8 := [67, 79, 78, 78, 69, 67, 84]
 
 end Http

@@ -2,6 +2,9 @@ import Http.Types
 
 namespace Http
 
+/-- The largest integer that fits in 64 bits. A chunk size above this is rejected. -/
+def maxUInt64 : Nat := 2 ^ 64 - 1
+
 def lowerByte (b : UInt8) : UInt8 :=
   if 65 ≤ b && b ≤ 90 then b + 32 else b
 
@@ -187,11 +190,11 @@ decreasing_by
   · omega
   · decide
 
-def hexDigit (d : Nat) : UInt8 :=
+def nibble (d : Nat) : UInt8 :=
   if d < 10 then UInt8.ofNat (48 + d) else UInt8.ofNat (87 + d)
 
 def natToHexLower (n : Nat) : List UInt8 :=
-  let digit := hexDigit (n % 16)
+  let digit := nibble (n % 16)
   if n < 16 then [digit]
   else natToHexLower (n / 16) ++ [digit]
 termination_by n
@@ -230,8 +233,8 @@ theorem decVal_digit (d : Nat) (h : d < 10) :
   exact congrArg some (Nat.add_sub_cancel_left 48 d)
 
 theorem hexVal_digit (d : Nat) (h : d < 16) :
-    hexVal (hexDigit d) = some d := by
-  unfold hexDigit hexVal
+    hexVal (nibble d) = some d := by
+  unfold nibble hexVal
   by_cases h10 : d < 10
   · have hlt : 48 + d < 256 := by omega
     simp only [h10, ite_true]
@@ -367,7 +370,7 @@ theorem parseAcc_hex (acc n : Nat) (hacc : acc ≤ maxUInt64)
   | ind n ih =>
     by_cases h16 : n < 16
     · have hmod : n % 16 = n := Nat.mod_eq_of_lt h16
-      have hchars : natToHexLower n = [hexDigit n] := by
+      have hchars : natToHexLower n = [nibble n] := by
         rw [natToHexLower]
         simp [h16, hmod]
       have hdig : hexDigits n = 1 := by
@@ -409,10 +412,10 @@ theorem parseAcc_hex (acc n : Nat) (hacc : acc ≤ maxUInt64)
         rw [hmul, Nat.add_assoc, hdivmod, hpow, hassoc]
       have hsum : (acc * 16 ^ hexDigits (n / 16) + n / 16) * 16 + n % 16 ≤ maxUInt64 := by
         rw [hstep]; exact h
-      have hchars : natToHexLower n = natToHexLower (n / 16) ++ [hexDigit (n % 16)] := by
+      have hchars : natToHexLower n = natToHexLower (n / 16) ++ [nibble (n % 16)] := by
         rw [natToHexLower]
         simp [h16]
-      have happ := parseAcc_append 16 hexVal acc (natToHexLower (n / 16)) [hexDigit (n % 16)] hacc
+      have happ := parseAcc_append 16 hexVal acc (natToHexLower (n / 16)) [nibble (n % 16)] hacc
       rw [hchars, happ, ih']
       unfold parseAcc
       rw [hd]
