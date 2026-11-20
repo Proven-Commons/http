@@ -1019,6 +1019,13 @@ FIXED = [
     b"GET / HTTP/1.x\r\nHost: a\r\n\r\n",
     b"GET / HTTP/9.9\r\nHost: a\r\n\r\n",
     b"GET / HTTP/9.1\r\nHost: a\r\n\r\n",
+    # absolute-URI allows an empty hier-part, so `foo:` is a target.
+    # `[]` is not an IP-literal or a reg-name. `<` is not a pchar, so
+    # `http://a/<` is not path-abempty.
+    b"GET foo: HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"CONNECT []:443 HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET http://a/< HTTP/1.1\r\nHost: a\r\n\r\n",
+    b"GET / HTTP/1.1\r\nHost: []\r\n\r\n",
     # Empty lines first, and a head cut short
     b"\r\n\r\nGET / HTTP/1.1\r\nHost: a\r\n\r\n",
     b"\n\r\nGET / HTTP/1.1\r\nHost: a\r\n\r\n",
@@ -1026,6 +1033,34 @@ FIXED = [
     b"",
     b"\r\n",
 ]
+
+# Bodies `parseRequest` reads. The expected line is the `chunk` answer:
+# OK, the body length, the body in hex, and the octets after the body.
+CHUNK_BODIES = [
+    (b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n"
+     b"5\r\nhello\r\n0\r\n\r\n", "OK\t5\t68656c6c6f\t"),
+    (b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n"
+     b"5;a=\"x\"\r\nhello\r\n0\r\n\r\n", "OK\t5\t68656c6c6f\t"),
+    (b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n"
+     b"5;foo\r\nhello\r\n0\r\n\r\n", "OK\t5\t68656c6c6f\t"),
+    (b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n"
+     b"0\r\n\r\n", "OK\t0\t\t"),
+    (b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n"
+     b"1\r\nZ\r\n0\r\n\r\nNEXT", "OK\t1\t5a\t4e455854"),
+    (b"POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhelloEXTRA",
+     "OK\t5\t68656c6c6f\t4558545241"),
+    (b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n"
+     b"5;=x\r\nhello\r\n0\r\n\r\n", "REJECT"),
+    (b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n"
+     b"5;a=\"x\r\nhello\r\n0\r\n\r\n", "REJECT"),
+    (b"POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n"
+     b"5\r\nhelloXX0\r\n\r\n", "REJECT"),
+    (b"GET foo: HTTP/1.1\r\nHost: a\r\n\r\n", "OK\t0\t\t"),
+    (b"CONNECT []:443 HTTP/1.1\r\nHost: a\r\n\r\n", "REJECT"),
+    (b"GET http://a/< HTTP/1.1\r\nHost: a\r\n\r\n", "REJECT"),
+    (b"GET / HTTP/1.1\r\nHost: []\r\n\r\n", "REJECT"),
+]
+
 
 MALFORMED = [
     ("frob 30", "unknown operation"),
@@ -1525,6 +1560,16 @@ def main():
     long, long_right, long_took, long_problems = check_long()
     failures += long_problems
 
+    chunk_req = "".join(f"chunk {bs.hex()}\n" for bs, _ in CHUNK_BODIES)
+    chunk_out, chunk_problem = run_tool(chunk_req)
+    if chunk_problem:
+        failures.append(("(chunked bodies)", "a clean run", chunk_problem))
+    for (bs, want), got in itertools.zip_longest(CHUNK_BODIES, chunk_out):
+        if bs is None:
+            failures.append(("(no chunk request)", "nothing", got))
+        elif got != want:
+            failures.append((f"chunk {bs[:80]!r}", want, "(no answer)" if got is None else got))
+
     got, problem = run_tool(f"head {FIXED[0].hex()}", timeout=60)
     eof_right = got == [answer(FIXED[0])] and not problem
     if not eof_right:
@@ -1568,6 +1613,9 @@ def main():
         f"each run within the time in brackets: "
         + "; ".join(f"{name} ({seconds} s)" for name, _, seconds in long)
         + f". Runs answered right in time: {long_right} of {2 * len(long)}",
+        f"- Chunked bodies, including `GET foo:`, `CONNECT []:443` and `GET http://a/<`: "
+        f"{sum(1 for (_, want), got in zip(CHUNK_BODIES, chunk_out) if got == want)} of "
+        f"{len(CHUNK_BODIES)}",
         f"- A last line with no LF, sent alone, answered right: {'yes' if eof_right else 'no'}",
         f"- Failures: {len(failures)}",
         "",

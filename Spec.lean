@@ -7,6 +7,7 @@
 -/
 
 import Http
+import Http.ChunkProofs
 import Spec.Abnf
 import Spec.Rules
 import Spec.Defs
@@ -170,3 +171,82 @@ theorem Spec.head_vectors :
       (·.1.framing) = some (.length 0) ∧
     (parseHead (Spec.ascii "CONNECT http:80 HTTP/1.1\r\nHost: http\r\n\r\n")).bind
       (·.1.framing) = some (.length 0) := sorry
+
+/-! ## Chunked framing and the body -/
+
+/-- Chunked framing is HTTP/1.1 or a later 1.x, with no Content-Length
+    field, and the combined Transfer-Encoding value matches a list of the
+    one coding `chunked` (empty elements allowed). The method is not
+    `CONNECT`, and the target does not begin with `:`. -/
+theorem Spec.determineFraming_rejects_nonfinal_chunked (h : Head)
+    (hf : determineFraming h = some .chunked) :
+    h.major = 1 ∧ 1 ≤ h.minor ∧
+      (∀ f, f ∈ h.fields → f.isNamed contentLengthName = false) ∧
+      Grammar.chunkedList.isMatch
+        (List.intercalate [0x2C]
+          ((h.fields.filter (·.isNamed transferEncodingName)).map (·.value))) = true ∧
+      h.method ≠ connectName ∧ h.target.head? ≠ some 0x3A :=
+  Http.determineFraming_rejects_nonfinal_chunked h hf
+
+/-- The same hypothesis, without the claim about the combined
+    Transfer-Encoding value. -/
+theorem Spec.chunked_requires_http11_without_cl (h : Head)
+    (hf : determineFraming h = some .chunked) :
+    h.major = 1 ∧ 1 ≤ h.minor ∧
+      (∀ f, f ∈ h.fields → f.isNamed contentLengthName = false) :=
+  Http.chunked_requires_http11_without_cl h hf
+
+/-- A Transfer-Encoding field whose combined value is not that list is
+    not framed as chunked. -/
+theorem Spec.determineFraming_rejects_bad_te (h : Head)
+    (hte : ∃ f, f ∈ h.fields ∧ f.isNamed transferEncodingName = true)
+    (hbad : Grammar.chunkedList.isMatch
+        (List.intercalate [0x2C]
+          ((h.fields.filter (·.isNamed transferEncodingName)).map (·.value))) = false) :
+    determineFraming h ≠ some .chunked :=
+  Http.determineFraming_rejects_bad_te h hte hbad
+
+/-- HTTP/1.0 with a Transfer-Encoding field is not framed as chunked. -/
+theorem Spec.determineFraming_rejects_http10_te (h : Head) (hminor : h.minor = 0)
+    (hte : ∃ f, f ∈ h.fields ∧ f.isNamed transferEncodingName = true) :
+    determineFraming h ≠ some .chunked :=
+  Http.determineFraming_rejects_http10_te h hminor hte
+
+/-- A head has at most one framing. -/
+theorem Spec.determineFraming_disjoint (h : Head) (f1 f2 : Framing)
+    (h1 : determineFraming h = some f1) (h2 : determineFraming h = some f2) :
+    f1 = f2 :=
+  Http.determineFraming_disjoint h f1 f2 h1 h2
+
+/-- `decodeChunked` reads what `encodeChunked` wrote, for a body of at
+    most 2^64 − 1 octets. An empty body is the chunk `0`. -/
+theorem Spec.decodeChunked_encodeChunked (body : List UInt8) (h : body.length ≤ maxUInt64) :
+    decodeChunked (encodeChunked body) = some (body, [], []) :=
+  Http.decodeChunked_encodeChunked body h
+
+/-- A length-framed body that `parseHead` returns after the printed head
+    is the body `parseRequest` returns, with nothing after it. -/
+theorem Spec.parseRequest_serializeFixed (h : Head) (body : List UInt8)
+    (hf : h.framing = some (.length body.length))
+    (hp : parseHead (h.print ++ body) = some (h, body)) :
+    parseRequest (h.print ++ body) = some { head := h, body := body, rest := [] } :=
+  Http.parseRequest_serializeFixed h body hf hp
+
+/-- A chunked body that `encodeChunked` wrote, after a printed head that
+    `parseHead` returns and that is framed as chunked, is the body
+    `parseRequest` returns. -/
+theorem Spec.parseRequest_serializeChunked (h : Head) (body : List UInt8)
+    (hlen : body.length ≤ maxUInt64) (hf : h.framing = some .chunked)
+    (hp : parseHead (h.print ++ encodeChunked body) = some (h, encodeChunked body)) :
+    parseRequest (h.print ++ encodeChunked body) =
+      some { head := h, body := body, rest := [] } :=
+  Http.parseRequest_serializeChunked h body hlen hf hp
+
+/-- Two readings of one byte string into the same number of requests
+    agree on the requests and on the octets left over. -/
+theorem Spec.parseRequest_stream_unique (stream tail1 tail2 : List UInt8)
+    (msgs1 msgs2 : List (Head × List UInt8))
+    (h1 : StreamFrames msgs1 tail1 stream) (h2 : StreamFrames msgs2 tail2 stream)
+    (hlen : msgs1.length = msgs2.length) :
+    msgs1 = msgs2 ∧ tail1 = tail2 :=
+  Http.parseRequest_stream_unique stream tail1 tail2 msgs1 msgs2 h1 h2 hlen

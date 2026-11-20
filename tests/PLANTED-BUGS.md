@@ -6,13 +6,13 @@ against the changed tool. A bug is caught when they report failures.
 
 | Bug | File | Failures |
 |-----|------|----------|
-| bare LF ends a line | `Http/Head.lean` | 6090 |
+| bare LF ends a line | `Http/Head.lean` | 6089 |
 | bare CR kept in a line | `Http/Head.lean` | 0, equivalent: the code gives `none` for a CR that is not followed by LF, and the change keeps that CR in the line instead. Every line is then read by parseHead or parseField, and neither accepts a CR: not in the method (a token), the target (no rule of the target grammar has 0x0D), the version (exactly `HTTP/` digit `.` digit), a field name (a token) or a field value (trim removes only SP and HTAB, and isFieldValue allows only field-vchar, SP and HTAB). A line holding a CR is not empty, so it never ends the head. So parseHead gives `none` in both, and on every other input the code is the same |
 | space before colon dropped | `Http/Head.lean` | 8646 |
-| trailing whitespace kept | `Http/Head.lean` | 206968 |
+| trailing whitespace kept | `Http/Head.lean` | 206962 |
 | NUL allowed in a value | `Http/Head.lean` | 3433 |
 | a double quote in a token | `Http/Head.lean` | 17 |
-| empty lines first not skipped | `Http/Head.lean` | 38254 |
+| empty lines first not skipped | `Http/Head.lean` | 38251 |
 | minor version digit unchecked | `Http/Head.lean` | 67 |
 | Host not required in HTTP/1.1 | `Http/Framing.lean` | 5825 |
 | two Host lines accepted | `Http/Framing.lean` | 929 |
@@ -22,8 +22,8 @@ against the changed tool. A bug is caught when they report failures.
 | Content-Length and port digits read backwards | `Http/Framing.lean` | 23606 |
 | Transfer-Encoding overrides Content-Length | `Http/Framing.lean` | 1889 |
 | Transfer-Encoding in HTTP/1.0 accepted | `Http/Framing.lean` | 2891 |
-| chunked compared case-sensitively | `Http/Grammar.lean` | 7112 |
-| list: no empty elements before chunked | `Http/Grammar.lean` | 4546 |
+| chunked compared case-sensitively | `Http/Grammar.lean` | 7111 |
+| list: no empty elements before chunked | `Http/Grammar.lean` | 4545 |
 | list: no empty elements after chunked | `Http/Grammar.lean` | 5047 |
 | list: at most one empty element before chunked | `Http/Grammar.lean` | 2785 |
 | list: a tab is not OWS | `Http/Grammar.lean` | 2335 |

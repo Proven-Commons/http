@@ -3,7 +3,7 @@
 Written by `tests/cross_check.py`, a one-off comparison that is not part of the verified bar. Its docstring says how the heads are sent and judged, and how a difference gets its category. RFC 9112 lets a recipient repair some malformed heads instead of rejecting them, so a difference here is a different choice, not always an error.
 
 - Heads: the first 5991 inputs of the differential tests (seed 20261025, `--count 6000`, less the malformed requests to the tool). Every parser is sent all 5991. A head whose verdicts differ is also sent again with features changed, to find its category.
-- This project rejects 4195 of them. It accepts 1083 with no body, 481 with a Content-Length from 1 to 1,000,000, 223 as chunked, and 9 with a Content-Length above 1,000,000.
+- This project rejects 4196 of them. It accepts 1083 with no body, 480 with a Content-Length from 1 to 1,000,000, 223 as chunked, and 9 with a Content-Length above 1,000,000.
 - Sent after the head: nothing after a head this project rejects; the whole body for a Content-Length up to 1,000,000; `5\r\nhello\r\n0\r\n\r\n` (5 octets of data) for chunked; nothing for a Content-Length above 1,000,000, so those heads are judged on the head alone.
 - A parser accepts a head when it reads it and passes the request on, even when it then waits for a body that is never sent.
 - In the tables, "accepts" means the other parser accepts a head this project rejects, and "rejects" means it rejects a head this project accepts. The examples show the head as sent, cut at 100 octets.
@@ -12,10 +12,10 @@ Written by `tests/cross_check.py`, a one-off comparison that is not part of the 
 ## Node v22.23.4 (llhttp)
 
 - Heads sent: 5991
-- Same verdict: 4422 (920 both accept, 3502 both reject)
-- Different verdict: 1563 (687 it accepts and this project rejects, 876 it rejects and this project accepts)
+- Same verdict: 4418 (918 both accept, 3500 both reject)
+- Different verdict: 1567 (690 it accepts and this project rejects, 877 it rejects and this project accepts)
 - No answer: 6
-- Body lengths compared, where both accept: 875. Of those, 581 have no body and 294 a non-zero length (261 by Content-Length, 33 chunked). 875 read the same length and 0 another.
+- Body lengths compared, where both accept: 873. Of those, 580 have no body and 293 a non-zero length (260 by Content-Length, 33 chunked). 873 read the same length and 0 another.
 - Not compared, where both accept: 0 with a Content-Length above 1,000,000, and 45 whose answer has no count.
 
 The heads it rejects and this project accepts, by the feature whose change makes it accept them: alone, or together with other changes.
@@ -24,7 +24,7 @@ The heads it rejects and this project accepts, by the feature whose change makes
 | --- | --- | --- |
 | a method other than the registered ones | 225 | 138 |
 | the authority-form with a method other than CONNECT | 122 | 76 |
-| an absolute-form target with no authority | 123 | 61 |
+| an absolute-form target with no authority | 124 | 61 |
 | HTTP/1.2 to 1.9 | 93 | 80 |
 | a Transfer-Encoding list with empty elements | 62 | 69 |
 | a tab after a Content-Length or Transfer-Encoding value | 15 | 12 |
@@ -36,9 +36,9 @@ Where it differs from this project (the two shortest examples):
 | It | Category | Heads | Examples |
 | --- | --- | --- | --- |
 | rejects | a method other than the registered ones | 225 | `b'Connect / HTTP/1.1\r\nHost: a\r\n\r\n'`, `b'IyUqp * HTTP/1.1\r\nhOsT:  [::]:80 \r\n\r\n'` |
+| accepts | a Host value with a bad IP literal | 130 | `b'GET / HTTP/1.1\r\nHost: []\r\n\r\n'`, `b'GET / HTTP/1.1\r\nHost: ::1\r\n\r\n'` |
 | accepts | a major version other than 1 | 130 | `b'GET / HTTP/2.0\r\nHost: a\r\n\r\n'`, `b'DELETE * HTTP/2.0\r\nhost::80 \r\n\r\n'` |
-| accepts | a Host value with a bad IP literal | 129 | `b'GET / HTTP/1.1\r\nHost: ::1\r\n\r\n'`, `b'GET / HTTP/1.1\r\nHost: [v.a]\r\n\r\n'` |
-| rejects | an absolute-form target with no authority | 123 | `b'GET a:80 HTTP/1.1\r\nHost: a\r\n\r\n'`, `b'GET htt:a HTTP/1.1\r\nHost: a\r\n\r\n'` |
+| rejects | an absolute-form target with no authority | 124 | `b'GET a:80 HTTP/1.1\r\nHost: a\r\n\r\n'`, `b'GET foo: HTTP/1.1\r\nHost: a\r\n\r\n'` |
 | rejects | the authority-form with a method other than CONNECT | 122 | `b'POST 200.9.99.250:443 HTTP/1.1\r\nHOST:  \t\r\n\r\n'`, `b'OPTIONS [::]:0 HTTP/1.1\r\neqg:  \r\nhOsT:  ~x \r\n\r\n'` |
 | rejects | HTTP/1.2 to 1.9 | 93 | `b'GET / HTTP/1.2\r\nHost: a\r\n\r\n'`, `b'HEAD /RUXBl HTTP/1.2\r\nhost: [::]:80  \r\n\r\n'` |
 | accepts | two Host lines | 70 | `b'GET / HTTP/1.0\r\nHost: a\r\nHost: b\r\n\r\n'`, `b'GET / HTTP/1.1\r\nHost: a\r\nHost: a\r\n\r\n'` |
@@ -57,8 +57,8 @@ Where it differs from this project (the two shortest examples):
 | accepts | CONNECT with an empty host | 18 | `b'CONNECT :443 HTTP/1.0\r\n\r\n'`, `b'CONNECT : HTTP/1.1\r\nHost: a\r\n\r\n'` |
 | accepts | Transfer-Encoding in HTTP/1.0 | 18 | `b'POST /a HTTP/1.0\r\nTransfer-Encoding: chunked\r\n\r\n'`, `b'OPTIONS /S1/@ HTTP/1.0\r\nm+PTgQe:_ \t\t\xbfwK  \r\nHost:[::D5a:ed32] \r\nTRANSFER-ENCODING: gzip, chunked \r\n\r\n'` |
 | rejects | together: a method other than the registered ones; a Transfer-Encoding list with empty elements | 18 | `b'OZxN!T. * HTTP/1.1\r\nHOST:10.255.255.1\r\n7S: h zQo:!Je \r\nTransfer-Encoding: \t CHUNKED ,\r\n*2u3: \tZw \t \r'`, `b'\r\n\r\nj /=nLs@/%47?Fu HTTP/1.1\r\nHost:[vFA.v&nb]\r\ntransfer-encoding:\t ,   ,\t \t ,  ChUNKed ,  \t ,  \r\nsW:'` |
+| accepts | a target with a bad IP literal | 17 | `b'CONNECT []:443 HTTP/1.1\r\nHost: a\r\n\r\n'`, `b'GET http://[v1.]/ HTTP/1.1\r\nHost: a\r\n\r\n'` |
 | rejects | together: HTTP/1.2 to 1.9; a Transfer-Encoding list with empty elements | 17 | `b"OPTIONS /U?XPY HTTP/1.9\r\nko3R69KF:  \x88Y'f\t@$\r\nHost:\t[D02d:C4:F:A:fe58:a7:8:e30]\t\r\nTransfer-Encoding:,"`, `b"GET /'~XD/:P?9nh1s/+o HTTP/1.9\r\nTRANSFER-ENCODING: Chunked \r\nTransfer-Encoding: ,\t\r\nHOST:  199.9.249"` |
-| accepts | a target with a bad IP literal | 16 | `b'GET http://[v1.]/ HTTP/1.1\r\nHost: a\r\n\r\n'`, `b'GET http://[1::2::3]/ HTTP/1.1\r\nHost: x\r\n\r\n'` |
 | accepts | other whitespace in the request line | 16 | `b'GET  /a HTTP/1.1\r\nHost: x\r\n\r\n'`, `b'PATCH  * HTTP/1.1\r\nHost:   \r\no8s:  \xa9\r\n\r\n'` |
 | rejects | a tab after a Content-Length or Transfer-Encoding value | 15 | `b'PUT /n HTTP/1.1\r\nhost: %DCT%Ee7tj-.GL:80  \r\nTransfer-Encoding:\tCHUNKED\t\r\n\r\n'`, `b'TRACE /!:wEp) HTTP/1.1\r\nTransfer-Encoding:\tchunked \t \r\n*`:  P\t-GW:I\t\xe0K\tyO:\r\nHost: %26c%cDJ*$_s:8080\t'` |
 | rejects | together: the authority-form with a method other than CONNECT; a Transfer-Encoding list with empty elements | 14 | `b'POST DW~g:443 HTTP/1.1\r\nTRANSFER-ENCODING:\tchunked,\t\r\nhOsT:\t[7::A3A5:0:Ae5]\t\r\n\r\n'`, `b'GET JOg.Nt%BBysUBr.d5T:443 HTTP/1.1\r\ntransfer-encoding:  chunked , , \r\nhost:5.I.Yc%CA&d: \r\nSOsR: l~b'` |
@@ -67,8 +67,8 @@ Where it differs from this project (the two shortest examples):
 | rejects | together: HTTP/1.2 to 1.9; the authority-form with a method other than CONNECT | 11 | `b"POST [9:ABA:DB::C79:Aa55:f3Ea:2]:8080 HTTP/1.2\r\nHost: %91.qw'zr~:443 \t \r\n\r\n"`, `b'GET 0.250.99.213:0 HTTP/1.2\r\nHOST: 6oeD.2UR%7DbLh7 \r\nContent-Length: 5  \r\n\r\n'` |
 | accepts | CONNECT with an empty port | 10 | `b'CONNECT a: HTTP/1.1\r\nHost: a\r\n\r\n'`, `b'CONNECT http: HTTP/1.1\r\nHost: a\r\n\r\n'` |
 | accepts | a target with a bad percent escape | 9 | `b'GET /%4g HTTP/1.1\r\nHost: x\r\n\r\n'`, `b'GET /%zz HTTP/1.1\r\nHost: x\r\n\r\n'` |
+| accepts | another target outside RFC 3986 | 7 | `b'GET /a#frag HTTP/1.1\r\nHost: x\r\n\r\n'`, `b'CONNECT ::1:80 HTTP/1.1\r\nHost: a\r\n\r\n'` |
 | accepts | a bare CR | 6 | `b'\r\r\nHEAD / HTTP/1.1\r\nContent-Length: \t 996606  \r\nhOsT: \t :80 \r\n\r\n'`, `b"\rCONNECT /i%f7%7cGy%78/j*QCyl//1S; HTTP/1.1\r\n'5:]!<S1{PE_\t/JD9x \t.I \r\nHOST:\t: \r\nHOST:[VA.uIx2]\r\n\r\n"` |
-| accepts | another target outside RFC 3986 | 6 | `b'GET /a#frag HTTP/1.1\r\nHost: x\r\n\r\n'`, `b'CONNECT ::1:80 HTTP/1.1\r\nHost: a\r\n\r\n'` |
 | rejects | a Content-Length of 2^63 or more | 6 | `b'DELETE /W,/D8gX@/?B/ HTTP/1.0\r\nhOsT:L.XM\r\nCONTENT-LENGTH: 18446744073709551616  \r\n\r\n'`, `b'PATCH /Vn/Al@/*:%DF:/XPb HTTP/1.1\r\n-:  caD~$\t\xf1{fm\xbf\r\ncontent-length:18446744073709551616 \t \r\nhost:  2'` |
 | rejects | together: the authority-form with a method other than CONNECT; a method other than the registered ones; a Transfer-Encoding list with empty elements | 6 | `b'9H 9.99.0.210:80 HTTP/1.1\r\nTRANSFER-ENCODING:  ,  ,  ChunKed \t \r\nIb9e: qQrrk\t\r\nHOST: [B::6FDD:e80b] '`, `b"lWl%c ;y.T:65535 HTTP/1.1\r\ntransfer-encoding: \t, \t \r\ntransfer-encoding: chunked\r\nhost: x&.'RGKJ1 \r\nt"` |
 | accepts | a Transfer-Encoding with another coding before chunked | 5 | `b'POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: gzip, chunked\r\n\r\n'`, `b'CONNECT 5%3CsOppl.Yetm%eDk.!%84F)3K:30136 HTTP/1.1\r\nHOST:  rNRE:0\r\nTRANSFER-ENCODING:x\t,\tchunked\t\r\n\r'` |
@@ -109,8 +109,8 @@ Where it differs from this project (the two shortest examples):
 ## Go go1.22.2 net/http
 
 - Heads sent: 5991
-- Same verdict: 4714 (1172 both accept, 3542 both reject)
-- Different verdict: 1276 (652 it accepts and this project rejects, 624 it rejects and this project accepts)
+- Same verdict: 4712 (1172 both accept, 3540 both reject)
+- Different verdict: 1278 (655 it accepts and this project rejects, 623 it rejects and this project accepts)
 - No answer: 1
 - Body lengths compared, where both accept: 1172. Of those, 803 have no body and 369 a non-zero length (321 by Content-Length, 48 chunked). 1172 read the same length and 0 another.
 - Not compared, where both accept: 0 with a Content-Length above 1,000,000, and 0 whose answer has no count.
@@ -119,7 +119,7 @@ The heads it rejects and this project accepts, by the feature whose change makes
 
 | Feature | Alone | With others |
 | --- | --- | --- |
-| empty lines before the request line | 268 | 60 |
+| empty lines before the request line | 267 | 60 |
 | the authority-form with a method other than CONNECT | 139 | 59 |
 | a Transfer-Encoding list with empty elements | 105 | 49 |
 | a percent escape of an ASCII octet in the host of the target | 18 | 9 |
@@ -129,8 +129,8 @@ Where it differs from this project (the two shortest examples):
 
 | It | Category | Heads | Examples |
 | --- | --- | --- | --- |
-| rejects | empty lines before the request line | 268 | `b'\r\n\r\nGET / HTTP/1.1\r\nHost: a\r\n\r\n'`, `b'\r\n\r\nPUT x: HTTP/1.1\r\nHost: eu-F\r\n\r\n'` |
-| accepts | a Host value with a bad IP literal | 161 | `b'GET / HTTP/1.1\r\nHost: ::1\r\n\r\n'`, `b'GET / HTTP/1.1\r\nHost: [v.a]\r\n\r\n'` |
+| rejects | empty lines before the request line | 267 | `b'\r\n\r\nGET / HTTP/1.1\r\nHost: a\r\n\r\n'`, `b'\r\n\r\nPUT x: HTTP/1.1\r\nHost: eu-F\r\n\r\n'` |
+| accepts | a Host value with a bad IP literal | 162 | `b'GET / HTTP/1.1\r\nHost: []\r\n\r\n'`, `b'GET / HTTP/1.1\r\nHost: ::1\r\n\r\n'` |
 | rejects | the authority-form with a method other than CONNECT | 139 | `b'MRoJ%2 P%Cf:443 HTTP/1.1\r\nhOsT:\tx.fZwWC \r\n\r\n'`, `b'POST 200.9.99.250:443 HTTP/1.1\r\nHOST:  \t\r\n\r\n'` |
 | rejects | a Transfer-Encoding list with empty elements | 105 | `b'POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked,\r\n\r\n'`, `b'POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: , chunked\r\n\r\n'` |
 | accepts | Transfer-Encoding in HTTP/1.0 | 90 | `b'POST /a HTTP/1.0\r\nTransfer-Encoding: chunked\r\n\r\n'`, `b'POST /a HTTP/1.0\r\nTransfer-Encoding: chunked,\r\n\r\n'` |
@@ -144,14 +144,14 @@ Where it differs from this project (the two shortest examples):
 | rejects | together: the authority-form with a method other than CONNECT; a Transfer-Encoding list with empty elements | 24 | `b'POST DW~g:443 HTTP/1.1\r\nTRANSFER-ENCODING:\tchunked,\t\r\nhOsT:\t[7::A3A5:0:Ae5]\t\r\n\r\n'`, `b'HEAD 9Xh!.TI~J6.~eoG4n%B8a:65535 HTTP/1.1\r\nhOsT:\tQ.lO1ua4* \r\nTransfer-Encoding:   , \t chUnked\r\n\r\n'` |
 | accepts | CONNECT whose target is not a host and port | 23 | `b'CONNECT * HTTP/1.1\r\nHost: a\r\n\r\n'`, `b'CONNECT / HTTP/1.1\r\nHost: a\r\n\r\n'` |
 | accepts | Transfer-Encoding with Content-Length | 21 | `b'POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n'`, `b'POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\n'` |
-| accepts | a target with a bad IP literal | 19 | `b'GET http://[v1.]/ HTTP/1.1\r\nHost: a\r\n\r\n'`, `b'GET http://[1::2::3]/ HTTP/1.1\r\nHost: x\r\n\r\n'` |
+| accepts | a target with a bad IP literal | 20 | `b'CONNECT []:443 HTTP/1.1\r\nHost: a\r\n\r\n'`, `b'GET http://[v1.]/ HTTP/1.1\r\nHost: a\r\n\r\n'` |
 | rejects | a percent escape of an ASCII octet in the host of the target | 18 | `b'GET http://%41%42/ HTTP/1.1\r\nHost: a\r\n\r\n'`, `b'PUT htTpS://H.%28%EB%9cq HTTP/1.0\r\nHost:GA.I%14mUmi \r\n\r\n'` |
 | rejects | together: empty lines before the request line; a Transfer-Encoding list with empty elements | 18 | `b'\r\n\r\nj /=nLs@/%47?Fu HTTP/1.1\r\nHost:[vFA.v&nb]\r\ntransfer-encoding:\t ,   ,\t \t ,  ChUNKed ,  \t ,  \r\nsW:'`, `b"\r\nTRACE /gp?i HTTP/1.1\r\n^3zo+sZ:\t \r\nhOsT: \t '9FV%48o.7*u%A2y \t \r\ntransfer-encoding:  \t ,  ,  , chunk"` |
 | accepts | CONNECT with content | 16 | `b'CONNECT a:443 HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\n'`, `b'CONNECT a:443 HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n'` |
 | accepts | another Host value outside RFC 3986 | 13 | `b'TRACE / HTTP/1.1\r\ny^%6: \t TsP\tPa\tOFC)\t\r\nhOsT:  h:p \r\n\r\n'`, `b'TRACE /Hx.&tP/F:p/%C1pe?2ONf:Zp HTTP/1.0\r\nDF:\t"~ qd\t\r\nHOST: \t h:p\r\n\r\n'` |
 | accepts | CONNECT with an empty host | 12 | `b'CONNECT :443 HTTP/1.0\r\n\r\n'`, `b'CONNECT : HTTP/1.1\r\nHost: a\r\n\r\n'` |
+| accepts | another target outside RFC 3986 | 7 | `b'GET /a#frag HTTP/1.1\r\nHost: x\r\n\r\n'`, `b'CONNECT ::1:80 HTTP/1.1\r\nHost: a\r\n\r\n'` |
 | rejects | a Content-Length of 2^63 or more | 7 | `b'DELETE /W,/D8gX@/?B/ HTTP/1.0\r\nhOsT:L.XM\r\nCONTENT-LENGTH: 18446744073709551616  \r\n\r\n'`, `b"OPTIONS httpx: HTTP/1.1\r\nContent-Length:18446744073709551616 \r\nHost: \t _u9mc'5.lKf%99vt.U%EA;Q \t \r\n\r"` |
-| accepts | another target outside RFC 3986 | 6 | `b'GET /a#frag HTTP/1.1\r\nHost: x\r\n\r\n'`, `b'CONNECT ::1:80 HTTP/1.1\r\nHost: a\r\n\r\n'` |
 | accepts | CONNECT with an empty port | 5 | `b'CONNECT a: HTTP/1.1\r\nHost: a\r\n\r\n'`, `b'CONNECT http: HTTP/1.1\r\nHost: a\r\n\r\n'` |
 | rejects | together: empty lines before the request line; a percent escape of an ASCII octet in the host of the target | 5 | `b"\r\nCONNECT %B3%7ET:20987 HTTP/1.1\r\nhost: \t %Fe.B:0  \r\n9Do025f': @ 2b  \r\n\r\n"`, `b'\r\nCONNECT VV=)+.Q.%45:080 HTTP/1.1\r\nQCP:  x \r\nHOST: HIatI%6f;,._D3%05DI;c\t\r\n\r\n'` |
 | accepts | CONNECT with port 0 | 4 | `b'CONNECT a:0 HTTP/1.1\r\nHost: a\r\n\r\n'`, `b'CONNECT a:00 HTTP/1.1\r\nHost: a\r\n\r\n'` |
@@ -168,8 +168,8 @@ Where it differs from this project (the two shortest examples):
 ## h11 0.16.0
 
 - Heads sent: 5991
-- Same verdict: 4347 (1336 both accept, 3011 both reject)
-- Different verdict: 1643 (1183 it accepts and this project rejects, 460 it rejects and this project accepts)
+- Same verdict: 4345 (1336 both accept, 3009 both reject)
+- Different verdict: 1645 (1186 it accepts and this project rejects, 459 it rejects and this project accepts)
 - No answer: 1
 - Body lengths compared, where both accept: 1329. Of those, 892 have no body and 437 a non-zero length (382 by Content-Length, 55 chunked). 1329 read the same length and 0 another.
 - Not compared, where both accept: 7 with a Content-Length above 1,000,000, and 0 whose answer has no count.
@@ -178,7 +178,7 @@ The heads it rejects and this project accepts, by the feature whose change makes
 
 | Feature | Alone | With others |
 | --- | --- | --- |
-| empty lines before the request line | 306 | 22 |
+| empty lines before the request line | 305 | 22 |
 | a Transfer-Encoding list with empty elements | 132 | 22 |
 
 Where it differs from this project (the two shortest examples):
@@ -186,15 +186,15 @@ Where it differs from this project (the two shortest examples):
 | It | Category | Heads | Examples |
 | --- | --- | --- | --- |
 | accepts | a major version other than 1 | 382 | `b'fe * HTTP/0.9\r\nHOST:e\t\r\n\r\n'`, `b'GET / HTTP/2.0\r\nHost: a\r\n\r\n'` |
-| rejects | empty lines before the request line | 306 | `b'\r\n\r\nGET / HTTP/1.1\r\nHost: a\r\n\r\n'`, `b'\r\n\r\nPUT x: HTTP/1.1\r\nHost: eu-F\r\n\r\n'` |
-| accepts | a Host value with a bad IP literal | 194 | `b'GET / HTTP/1.1\r\nHost: ::1\r\n\r\n'`, `b'GET / HTTP/1.1\r\nHost: [v.a]\r\n\r\n'` |
+| rejects | empty lines before the request line | 305 | `b'\r\n\r\nGET / HTTP/1.1\r\nHost: a\r\n\r\n'`, `b'\r\n\r\nPUT x: HTTP/1.1\r\nHost: eu-F\r\n\r\n'` |
+| accepts | a Host value with a bad IP literal | 195 | `b'GET / HTTP/1.1\r\nHost: []\r\n\r\n'`, `b'GET / HTTP/1.1\r\nHost: ::1\r\n\r\n'` |
 | rejects | a Transfer-Encoding list with empty elements | 132 | `b'POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked,\r\n\r\n'`, `b'POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: , chunked\r\n\r\n'` |
 | accepts | a Host value with an empty host, such as `:80` | 77 | `b'GET / HTTP/1.1\r\nHost: :\r\n\r\n'`, `b'GET / HTTP/1.1\r\nHost: :80\r\n\r\n'` |
 | accepts | a folded line (obs-fold) | 77 | `b'CONNECT xbrA:1 HTTP/1.1\r\nHOST: \t \t\r\n\tfolded\r\n\r\n'`, `b'n4tsvnO /mq. HTTP/1.1\r\nhost:  [veC.&b] \t \r\n folded\r\n\r\n'` |
 | accepts | a bare LF | 69 | `b'PATCH https:@tR HTTP/1.1\nhOsT:  C.+cH:8080 \r\n\r\n'`, `b'`IH /x+bv HTTP/2.0\nHOST:\t[17aA::35:7d:E3:7E2f] \t \r\n\r\n'` |
 | accepts | an http or https target with no host | 67 | `b'GET http: HTTP/1.1\r\nHost: a\r\n\r\n'`, `b'GET HTTP:/ HTTP/1.1\r\nHost: a\r\n\r\n'` |
 | accepts | another Host value outside RFC 3986 | 54 | `b'GET / HTTP/1.1\r\nHost: a b\r\n\r\n'`, `b'DELETE /)Uym HTTP/1.1\r\nhost:\tx? \r\n\r\n'` |
-| accepts | a target with a bad IP literal | 37 | `b'GET http://[v1.]/ HTTP/1.1\r\nHost: a\r\n\r\n'`, `b'GET http://[1::2::3]/ HTTP/1.1\r\nHost: x\r\n\r\n'` |
+| accepts | a target with a bad IP literal | 38 | `b'CONNECT []:443 HTTP/1.1\r\nHost: a\r\n\r\n'`, `b'GET http://[v1.]/ HTTP/1.1\r\nHost: a\r\n\r\n'` |
 | accepts | an http or https target with userinfo | 29 | `b'GET http://@a/ HTTP/1.1\r\nHost: a\r\n\r\n'`, `b'GET http://u@/ HTTP/1.1\r\nHost: a\r\n\r\n'` |
 | accepts | CONNECT with a port above 65535 | 23 | `b'CONNECT a:65536 HTTP/1.1\r\nHost: a\r\n\r\n'`, `b'CONNECT a:65616 HTTP/1.1\r\nHost: a\r\n\r\n'` |
 | rejects | together: empty lines before the request line; a Transfer-Encoding list with empty elements | 22 | `b'\r\n\r\nj /=nLs@/%47?Fu HTTP/1.1\r\nHost:[vFA.v&nb]\r\ntransfer-encoding:\t ,   ,\t \t ,  ChUNKed ,  \t ,  \r\nsW:'`, `b'\r\n\r\nGET 253.100.99.99:8080 HTTP/1.9\r\ntransfer-encoding: chunked\t,  \r\nHOST:\t[::8:d5:8] \r\n%q:  Ns;\t=NL'` |
@@ -203,7 +203,7 @@ Where it differs from this project (the two shortest examples):
 | accepts | a Content-Length list of equal values | 20 | `b'POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 5, 5\r\n\r\n'`, `b'HEAD /@d// HTTP/1.0\r\nZ:; \t \r\nCONTENT-LENGTH:\t5, 5 \t \r\n\r\n'` |
 | accepts | an authority-form target with an empty host | 19 | `b'GET :80 HTTP/1.0\r\n\r\n'`, `b'GET :80 HTTP/1.1\r\nHost: a\r\n\r\n'` |
 | accepts | CONNECT with content | 16 | `b'CONNECT a:443 HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\n'`, `b'CONNECT a:443 HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n'` |
-| accepts | another target outside RFC 3986 | 15 | `b'PATCH - HTTP/1.0\r\nhOsT:  : \r\n\r\n'`, `b'GET /a#frag HTTP/1.1\r\nHost: x\r\n\r\n'` |
+| accepts | another target outside RFC 3986 | 16 | `b'PATCH - HTTP/1.0\r\nhOsT:  : \r\n\r\n'`, `b'GET /a#frag HTTP/1.1\r\nHost: x\r\n\r\n'` |
 | accepts | a target with a bad percent escape | 14 | `b'GET /%4g HTTP/1.1\r\nHost: x\r\n\r\n'`, `b'GET /%zz HTTP/1.1\r\nHost: x\r\n\r\n'` |
 | accepts | no Host, in HTTP/1.1 to 1.9 | 12 | `b'DELETE 100.0.0.199:0 HTTP/1.2\r\n\r\n'`, `b'HEAD uedU~js.r63Rkw.G2*:65535 HTTP/1.9\r\n\r\n'` |
 | accepts | CONNECT with an empty host | 9 | `b'CONNECT :443 HTTP/1.0\r\n\r\n'`, `b'CONNECT : HTTP/1.1\r\nHost: a\r\n\r\n'` |

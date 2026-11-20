@@ -28,7 +28,8 @@ It prints the request line and each field, then the framing, here `length 5`. It
 
 - `Http.parseHead : List UInt8 → Option (Head × List UInt8)` reads a head and gives the octets after it.
 - `Http.Head.print` writes a head.
-- `Http.Head.framing : Head → Option Framing` gives the framing, or `none` when this library refuses the request.
+- `Http.Head.framing : Head → Option Framing` gives the framing, or `none` when this library refuses the request. `Http.determineFraming` is that function.
+- `Http.parseRequest` reads one request: the head, then the body that framing names. `Http.decodeChunked` reads a chunked body, and `Http.encodeChunked` writes one.
 - `Http.Re.isMatch` matches a string against a rule of the grammar.
 
 `SPEC.md` says what each one does.
@@ -51,13 +52,23 @@ The statements are in `Spec.lean`, and the proofs are in `Proofs/`. The statemen
 | A request with both Transfer-Encoding and Content-Length is rejected. | `Spec.framing_te_cl` |
 | A request with two Content-Length field lines is rejected, even when they agree. | `Spec.framing_two_cl` |
 | Test vectors, each with the answer `framing` gives. Accepted with no body: the examples of RFC 9112 sections 3.2.1 to 3.2.4, an HTTP/1.0 request with no Host, `CONNECT [::1]:65535`, `CONNECT http:80`, whose host is `http`, and `GET HTTP://a:/x`, with the scheme in upper case and an empty port. Accepted with a body: `Content-Length: 5` frames the five octets after the head, and `Transfer-Encoding: Chunked` is chunked. So are Transfer-Encoding lists with empty elements: `chunked,`, `, chunked`, and a `chunked` line with an empty Transfer-Encoding line, and `chunked` after a tab or two spaces. An empty Host value and `CONNECT a:443` with `Content-Length: 0` are accepted with no body. The classic shapes of request smuggling are rejected: two Content-Length values, Content-Length with Transfer-Encoding, `xchunked`, `chunked, identity`, `chunked, chunked`, `chunked;a=b`, a `chunked` line with a line of another coding, whitespace before a colon, a folded line, a bare LF, a bare CR, and Transfer-Encoding in HTTP/1.0. So are a missing Host and a repeated Host in HTTP/1.1, the Host values `:80` and `:`, a `CONNECT` with an empty port, port 0, port 65536, the target `/` or `:80`, or with content by `Content-Length: 5` or `Transfer-Encoding: chunked`, `GET :80` and `OPTIONS :`, and three `GET` targets: `http:` (no authority), `http:///a` (an empty host) and `https://u@a/` (userinfo). | `Spec.head_vectors` |
+| Chunked framing implies major version 1, a minor version of at least 1, no Content-Length field, and a combined Transfer-Encoding value that matches a list of the one coding `chunked`, empty elements allowed. The method is not `CONNECT`, and the target does not begin with `:`. `determineFraming` is `Head.framing`. | `Spec.determineFraming_rejects_nonfinal_chunked` |
+| The same hypothesis implies HTTP/1.1 or a later 1.x and no Content-Length, and this statement does not mention the combined Transfer-Encoding value. | `Spec.chunked_requires_http11_without_cl` |
+| A Transfer-Encoding field whose combined value is not that list is not framed as chunked. | `Spec.determineFraming_rejects_bad_te` |
+| HTTP/1.0 with a Transfer-Encoding field is not framed as chunked. | `Spec.determineFraming_rejects_http10_te` |
+| A head has at most one framing. | `Spec.determineFraming_disjoint` |
+| `decodeChunked` reads the body `encodeChunked` wrote, for a body of at most 2^64 − 1 octets. An empty body is the chunk `0`. | `Spec.decodeChunked_encodeChunked` |
+| When `parseHead` returns a printed head and the octets of a length-framed body, `parseRequest` returns that head and body. | `Spec.parseRequest_serializeFixed` |
+| When `parseHead` returns a printed head framed as chunked, followed by `encodeChunked` of a body of at most 2^64 − 1 octets, `parseRequest` returns that head and body. | `Spec.parseRequest_serializeChunked` |
+| Two readings of one byte string into the same number of requests agree on the requests and on the octets left over. | `Spec.parseRequest_stream_unique` |
 
 The command-line tool in `Main.lean` calls these functions directly.
 
 ## What is not proved
 
 - Reading requests and printing answers in `Main.lean`: the hex coding in `serve` mode, reading standard input in `check` mode, and the output and exit codes. The differential tests cover them, with malformed requests and CR LF line endings.
-- The body. This library frames the body but does not read it. It does not decode chunked data, chunk extensions or trailers, and does not count the octets of a length-framed body.
+- The command `chunk` in `Main.lean`, which prints the body `parseRequest` read. The differential tests cover it, including `GET foo:`, `CONNECT []:443`, `GET http://a/<`, a quoted chunk extension, an unknown extension, `1;=x`, an unclosed quote, and a chunk terminator that is not CRLF.
+- Which chunk streams `decodeChunked` accepts, beyond the round trip with `encodeChunked`. The extension grammar is the one in `SPEC.md`. The proofs do not say that every extension the RFC allows is accepted, or that every one it rejects is rejected. The tests check the cases named above.
 - What a server does with a request it accepts: the meaning of the method, the target and the fields, routing by Host, and the response.
 - Completeness against the RFCs. No theorem says that this library refuses every request the RFCs say a server must refuse. The statements are about its own rules, written from the RFCs, and `SPEC.md` says which of its refusals the RFCs require. What a server does after a refusal is also outside this library. For example, for an invalid Content-Length, RFC 9112 section 6.3 says "the server MUST respond with a 400 (Bad Request) status code and then close the connection". This library only decides that the request is refused.
 - Repairs the RFC allows. Where RFC 9112 or RFC 9110 lets a recipient either reject or repair, this library always rejects. That covers a bare LF as a line end, a bare CR, whitespace before the first field line, a folded line, whitespace other than one SP in the request line, a NUL in a value, Transfer-Encoding with Content-Length, two Content-Length lines that agree, and a Content-Length list of equal values such as `5, 5`. A server that repairs these accepts requests that this one refuses.
@@ -129,7 +140,7 @@ The test script compares the tool with the rules of RFC 9112, RFC 9110 and RFC 3
 
 - `Http/Types.lean`: the head, field and framing types. It is part of the specification.
 - `Http/Abnf.lean`: the grammar notation, a small language of regular expressions over octets. It is part of the specification.
-- `Http/Match.lean`, `Http/Grammar.lean`, `Http/Head.lean`, `Http/Framing.lean`: the code under proof. `Http/Grammar.lean` is the code's copy of the rules for the target, an http or https target, the Host value and a Transfer-Encoding list, which the proofs show equal to the spec's.
+- `Http/Match.lean`, `Http/Grammar.lean`, `Http/Head.lean`, `Http/Framing.lean`, `Http/Bytes.lean`, `Http/Parse.lean`: the code under proof. `Http/Grammar.lean` is the code's copy of the rules for the target, an http or https target, the Host value and a Transfer-Encoding list, which the proofs show equal to the spec's. `Http/Parse.lean` reads the body. `Http/ChunkProofs.lean` holds the proofs of the chunked statements, which `Spec.lean` and `Proofs/` both use.
 - `Spec.lean`: the statements, with `sorry` for proofs. A reviewer approves this file.
 - `Spec/Abnf.lean`: what a rule of the notation matches.
 - `Spec/Rules.lean`: the ABNF rules, from RFC 5234, RFC 9110, RFC 3986 and RFC 9112.

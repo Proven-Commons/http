@@ -117,4 +117,7 @@ def Head.framing (h : Head) : Option Framing :=
     if h.target.head? == some 0x3A || (h.method == connectName && fr != .length 0) then none
     else some fr
 
+/-- `Head.framing`, named for the chunked-framing statements. -/
+def determineFraming (h : Head) : Option Framing := h.framing
+
 end Http

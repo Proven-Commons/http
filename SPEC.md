@@ -49,7 +49,7 @@ A field's value does not include the optional whitespace around it (section 5.1)
   - `authority-form`, a host and port;
   - `asterisk-form`, `*`.
 
-  Each form is in its RFC 3986 grammar, with percent-escapes of two hex digits, and IPv6 and IPvFuture literals. A fragment (`#`) is not part of any form. The head keeps percent-escapes as written and does not decode them.
+  Each form is in its RFC 3986 grammar, with percent-escapes of two hex digits, and IPv6 and IPvFuture literals. A fragment (`#`) is not part of any form. The head keeps percent-escapes as written and does not decode them. `absolute-form` is an `absolute-URI`: a scheme, `:`, a hier-part, and an optional query. The hier-part may be empty (`path-empty`), so `GET foo:` is absolute-form, with the scheme `foo` and nothing after the colon. With `Host: a` and neither Transfer-Encoding nor Content-Length, that request is accepted and its body has length 0.
 
 RFC 9112 allows a recipient to repair some of these instead of rejecting them. Section 2.2 allows a single LF as a line end, and a bare CR replaced by SP. Section 3 allows parsing the request line on other whitespace. Section 5.2 allows a folded line to be replaced by SP. This library takes none of those choices: it rejects. Section 5.1 leaves no choice for whitespace before a colon: "A server MUST reject ... any received request message that contains whitespace between a header field name and colon".
 
@@ -62,7 +62,7 @@ RFC 9112 allows a recipient to repair some of these instead of rejecting them. S
 - **The version:** only major version 1 is accepted. RFC 9110 section 6.2 lets a server refuse other major versions with 505. A minor version of 1 or more is handled as 1.1, as section 6.2 asks of a version higher than the recipient implements.
 - **Host:** a request with more than one Host field line is refused. So is a request with a minor version of 1 or more and no Host line (RFC 9112, section 3.2). A Host value must be empty, or a host that is not empty with an optional port: `[ hostNonEmpty [ ":" port ] ]` (`Spec.hostField`). So `Host: :80` and `Host: :` are refused, though `uri-host [ ":" port ]` allows them, since `reg-name` may be empty. The reason is RFC 9112 section 3.3: for a target that is not in absolute-form, the server builds the target URI from the scheme, "://", and the Host value as its authority. `GET /` with `Host: :80` has the target URI `http://:80/`, with an empty host, and RFC 9110 section 4.2.1 says a recipient that processes such a URI "MUST reject it as invalid". An empty Host value is different. RFC 9112 section 3.2 tells a client to send one when the target URI has no authority, and section 3.3 says the server "can reject the request or determine whether a configured default applies". This library accepts it and leaves that choice to the server.
 - **An empty host in authority-form:** a target that begins with `:` is refused, whatever the method. In a `request-target` that is exactly an authority-form target with an empty host, such as `:80` or `:`: origin-form begins with `/`, absolute-form with a scheme, which begins with a letter, and asterisk-form is `*`. RFC 9112 section 3.3 says "If the request-target is in authority-form, the target URI's authority component is the request-target", for any method. So `GET :80` has the target URI `http://:80`, with an empty host, which RFC 9110 section 4.2.1 says a recipient "MUST reject". `Spec.AuthorityHostOK` states this.
-- **CONNECT:** when the method is `CONNECT`, the target must be `uri-host ":" port` with a host that is not empty (by the rule above), and the port, read as a decimal number, must be from 1 to 65535. Leading zeros are allowed, so `a:00080` is port 80. An empty port is refused, and so is a target that is not a host and port, such as `/` or `*`. RFC 9110 section 9.3.6 says "A server MUST reject a CONNECT request that targets an empty or invalid port number". It does not say which port numbers are invalid. Here a valid one is from 1 to 65535: a TCP port number is 16 bits (RFC 9293, section 3.1), and 0 is a Reserved port number (RFC 6335, section 6). A server need not accept CONNECT at all ("An origin server MAY accept a CONNECT request"), so refusing port 0 is allowed however "invalid" is read. The method is compared as written, since "The method token is case-sensitive" (section 9.1). So `connect` is another method, and this rule does not apply to it.
+- **CONNECT:** when the method is `CONNECT`, the target must be `uri-host ":" port` with a host that is not empty (by the rule above), and the port, read as a decimal number, must be from 1 to 65535. Leading zeros are allowed, so `a:00080` is port 80. An empty port is refused, and so is a target that is not a host and port, such as `/` or `*`. `CONNECT []:443` is refused: `[]` is not an IP-literal, which is `[` then an IPv6address or an IPvFuture then `]`, and it is not a reg-name. `Host: []` is refused for the same reason. RFC 9110 section 9.3.6 says "A server MUST reject a CONNECT request that targets an empty or invalid port number". It does not say which port numbers are invalid. Here a valid one is from 1 to 65535: a TCP port number is 16 bits (RFC 9293, section 3.1), and 0 is a Reserved port number (RFC 6335, section 6). A server need not accept CONNECT at all ("An origin server MAY accept a CONNECT request"), so refusing port 0 is allowed however "invalid" is read. The method is compared as written, since "The method token is case-sensitive" (section 9.1). So `connect` is another method, and this rule does not apply to it.
 - **CONNECT has no content:** a `CONNECT` with Transfer-Encoding, or with a Content-Length that is not 0, is refused (`Spec.ConnectNoContent`). RFC 9110 section 9.3.6 says "A CONNECT request message does not have content". Read alone, RFC 9112 section 6.3 would frame a body after such a head, and parsers differ on those octets: Go reads them as a body, and Node passes them to the tunnel. Refusing the request removes that difference. A server need not accept CONNECT at all (section 9.3.6: "An origin server MAY accept a CONNECT request"). `Content-Length: 0` is accepted, since it frames no content.
 - **http and https targets:** when the method is not exactly `CONNECT` and the target starts with `http:` or `https:`, in any case, the target must match
 
@@ -74,6 +74,7 @@ RFC 9112 allows a recipient to repair some of these instead of rejecting them. S
   - an empty host, such as `http://`, `http:///a` or `https://:443/`;
   - userinfo, such as `https://u@a/`, or the empty userinfo of `http://@a/`;
   - no authority, such as `http:` or `http:/a`. That is not an `http-URI` or `https-URI` at all, since both need `"://" authority`.
+  - a path that is not `path-abempty`. `path-abempty` is `*( "/" segment )` and `segment` is `*pchar`, so `GET http://a/<` is refused: `<` is a VCHAR and is not a `pchar`.
 
   An empty port is allowed, since "If the port subcomponent is empty or not given, TCP port 80 (the reserved port for WWW services) is the default" (section 4.2.1), and section 4.2.2 says the same of port 443. So `HTTP://a:/x` is accepted. A CONNECT target is not a URI. It consists "of only the host and port number of the tunnel destination" (section 9.3.6), so this rule does not apply to it: `CONNECT http:80` names the host `http` and the port 80. The method is compared as written here too, so `connect http:80` is held to this rule, and refused. With any method other than `CONNECT`, `http:80` is refused, though it also fits the authority-form.
 - **Transfer-Encoding:** all its field lines are read as one value. That combined field value is their values in order, joined with commas (RFC 9110, section 5.2). Transfer-Encoding is accepted only when the combined value is a list of the one coding `chunked`, in any case, in a request with a minor version of 1 or more and no Content-Length. Then the body is chunked. The list may have empty elements, which "do not contribute to the count of elements present", and RFC 9110 section 5.6.1.2 says a recipient MUST accept such lists. So the value must match `*( OWS "," OWS ) "chunked" *( OWS "," OWS )`. For example, `chunked,` and `, chunked` are chunked, and so is a `chunked` line together with an empty Transfer-Encoding line. Every other use is refused:
@@ -83,7 +84,18 @@ RFC 9112 allows a recipient to repair some of these instead of rejecting them. S
   - Chunked twice, such as `chunked, chunked`, or `chunked` on two lines. Section 6.1 says "A sender MUST NOT apply the chunked transfer coding more than once", and RFC 9110 section 15.5.1 lets a server answer "invalid request message framing" with 400.
   - Another coding before chunked, such as `gzip, chunked`. This library does not understand that coding, and section 6.1 says a server that receives "a transfer coding it does not understand SHOULD respond with 501".
 - **Content-Length:** with no Transfer-Encoding, it must be one field line whose value is `1*DIGIT` (RFC 9110, section 8.6). Then the body has that many octets. Section 6.3 lets a recipient accept a list of equal values such as `5, 5`. This library refuses it, and refuses two Content-Length lines even when they agree.
-- **Neither field:** the body has length 0, by section 6.3: "If this is a request message and none of the above are true, then the message body length is zero".
+- **Neither field:** the body has length 0, by section 6.3: "If this is a request message and none of the above are true, then the message body length is zero". So `GET foo: HTTP/1.1` with `Host: a` and no Transfer-Encoding or Content-Length is accepted with a body of length 0.
+
+## Decoding a chunked body
+
+When the framing is chunked, `decodeChunked` reads the body (RFC 9112, section 7.1). `parseRequest` is that reading for one whole request: `parseHead`, then the body `Head.framing` names. A length takes that many octets. Chunked uses `decodeChunked`, and the trailer section is parsed and then discarded.
+
+- A chunk-size is `1*HEXDIG`. This library refuses a size above 2^64 − 1.
+- A chunk extension is a token name and an optional `=` followed by a token or a quoted-string (section 7.1.1). It is not a whitelist of characters. `1;=x` is refused, because the name is missing. An unclosed quoted-string is refused. `1;a="x"` is accepted, and so is an unknown well-formed extension such as `1;foo`.
+- The octets of a chunk are followed by CRLF. Any other terminator is refused.
+- A chunk of size 0 ends the body. `encodeChunked` of an empty body is the two lines `0` and the empty line.
+
+`determineFraming` is `Head.framing`. Chunked framing implies major version 1, a minor version of at least 1, no Content-Length field, and a combined Transfer-Encoding value that matches the one-coding list above. It also implies that the method is not `CONNECT` and that the target does not begin with `:`.
 
 ## Which refusals the RFCs require
 
@@ -118,7 +130,7 @@ No theorem says that this library refuses every request the RFCs require a serve
 
 ## Errors
 
-`parseHead` returns `none` for any input that does not start with a complete head of the grammar. That includes input that ends before the empty line. `Head.framing` returns `none` for a request this library refuses. No function can fail any other way.
+`parseHead` returns `none` for any input that does not start with a complete head of the grammar. That includes input that ends before the empty line, `CONNECT []:443`, and `GET http://a/<`. `Head.framing` returns `none` for a request this library refuses. `parseRequest` returns `none` when the head is refused or is not of the grammar, when a length-framed body is shorter than its Content-Length, or when the chunk stream is not of the grammar above. No function can fail any other way.
 
 ## The command-line tool
 
@@ -127,7 +139,7 @@ The command-line tool in `Main.lean` has two modes:
 - `httphead check` reads a request on standard input. It prints the request line, each field and the framing: `length N`, `chunked` or `reject`. It prints `invalid` for input with no head of the grammar. It exits with 0 only for a request this library accepts.
 - `httphead serve` answers requests from the differential tests, one per line, with octets sent as hex digits. The header comment of `Main.lean` gives the protocol.
 
-Every answer comes from `parseHead`, `Head.print` and `Head.framing`.
+Every `head` answer comes from `parseHead`, `Head.print` and `Head.framing`. A `chunk` answer comes from `parseRequest`.
 
 ## What must always hold
 
@@ -143,6 +155,14 @@ Each property is a theorem in `Spec.lean`, under the name given.
 | Transfer-Encoding with Content-Length is refused. | `Spec.framing_te_cl` |
 | Two Content-Length field lines are refused. | `Spec.framing_two_cl` |
 | The examples of RFC 9112 sections 3.2.1 to 3.2.4 are accepted, with no body, and so are an HTTP/1.0 request with no Host, `CONNECT [::1]:65535`, `CONNECT http:80` and `GET HTTP://a:/x`. So are an empty Host value and `CONNECT a:443` with `Content-Length: 0`. A length and a chunked body are framed. Transfer-Encoding lists with empty elements, on one line or two, are chunked, and so is `chunked` after a tab or two spaces. The shapes of request smuggling are refused, and so is `chunked;a=b`. Also refused: a missing or repeated Host in HTTP/1.1; the Host values `:80` and `:`; a `CONNECT` with an empty port, port 0, port 65536, the target `/` or `:80`, or with content by `Content-Length: 5` or `Transfer-Encoding: chunked`; `GET :80` and `OPTIONS :`; and the targets `http:`, `http:///a` and `https://u@a/`. | `Spec.head_vectors` |
+| Chunked framing implies HTTP/1.1 or a later 1.x, no Content-Length, a combined Transfer-Encoding value that is a list of the one coding `chunked`, a method other than `CONNECT`, and a target that does not begin with `:`. | `Spec.determineFraming_rejects_nonfinal_chunked` |
+| The same, without the claim about the combined Transfer-Encoding value. | `Spec.chunked_requires_http11_without_cl` |
+| A Transfer-Encoding value that is not that list is not framed as chunked. | `Spec.determineFraming_rejects_bad_te` |
+| Transfer-Encoding in HTTP/1.0 is not framed as chunked. | `Spec.determineFraming_rejects_http10_te` |
+| A head has at most one framing. | `Spec.determineFraming_disjoint` |
+| `decodeChunked` reads the body `encodeChunked` wrote, when the body has at most 2^64 − 1 octets. | `Spec.decodeChunked_encodeChunked` |
+| After a printed head that `parseHead` returns, a length-framed body and a chunked body written by `encodeChunked` are the bodies `parseRequest` returns. | `Spec.parseRequest_serializeFixed`, `Spec.parseRequest_serializeChunked` |
+| Two readings of one byte string into the same number of requests agree. | `Spec.parseRequest_stream_unique` |
 
 Together, these fix every output.
 

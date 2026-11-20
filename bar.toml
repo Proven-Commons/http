@@ -22,7 +22,13 @@ files = [
   "Http/Types.lean", "Http/Abnf.lean",
 ]
 # The code under proof: the functions the statements are about.
-code = ["Http.Re.isMatch", "Http.parseHead", "Http.Head.print", "Http.Head.framing"]
+code = [
+  "Http.Re.isMatch", "Http.parseHead", "Http.Head.print", "Http.Head.framing",
+  "Http.determineFraming", "Http.Field.isNamed", "Http.contentLengthName",
+  "Http.transferEncodingName", "Http.connectName", "Http.Grammar.chunkedList",
+  "Http.decodeChunked", "Http.encodeChunked", "Http.parseRequest", "Http.maxUInt64",
+  "Http.FramedRequest", "Http.FramedRequest.mk", "Http.StreamFrames",
+]
 
 # One entry per approval, added in a pull request the reviewer approves.
 # [[spec.approval]]

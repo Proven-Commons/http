@@ -9,7 +9,16 @@
     "Spec.framing_iff",
     "Spec.framing_te_cl",
     "Spec.framing_two_cl",
-    "Spec.head_vectors"
+    "Spec.head_vectors",
+    "Spec.determineFraming_rejects_nonfinal_chunked",
+    "Spec.chunked_requires_http11_without_cl",
+    "Spec.determineFraming_rejects_bad_te",
+    "Spec.determineFraming_rejects_http10_te",
+    "Spec.determineFraming_disjoint",
+    "Spec.decodeChunked_encodeChunked",
+    "Spec.parseRequest_serializeFixed",
+    "Spec.parseRequest_serializeChunked",
+    "Spec.parseRequest_stream_unique"
   ],
   "permitted_axioms": [
     "propext",

@@ -18,14 +18,17 @@
                       `Head.print` writes it, in hex, the octets after
                       the head, in hex, and the framing (`length N`,
                       `chunked` or `reject`); or REJECT
+    chunk HEX         prints  OK, then tab-separated: the body length,
+                      the body in hex, and the octets after the body,
+                      in hex; or REJECT
 
   A malformed request prints `error`: an unknown operation, or hex
   digits that are not lower case or not in pairs. A request line may end
   in LF or CR LF.
 
-  Every answer comes from the proved functions in `Http/`: `parseHead`,
-  `Head.print` and `Head.framing`. The hex coding and the request
-  handling here are covered by the tests, not by a proof.
+  A `head` answer comes from `parseHead`, `Head.print` and `Head.framing`.
+  A `chunk` answer comes from `parseRequest`. The hex coding and the
+  request handling here are covered by the tests, not by a proof.
 -/
 
 import Http
@@ -88,6 +91,12 @@ def request (line : String) : Option String :=
     let bs ← hexBytes h.toList
     pure <| match parseHead bs with
       | some (hd, rest) => s!"OK\t{toHex hd.print}\t{toHex rest}\t{framingText hd.framing}"
+      | none => "REJECT"
+  | ["chunk", h] => do
+    let bs ← hexBytes h.toList
+    pure <| match parseRequest bs with
+      | some r =>
+        s!"OK\t{decimalText 64 r.body.length 0}\t{toHex r.body}\t{toHex r.rest}"
       | none => "REJECT"
   | _ => none
 
