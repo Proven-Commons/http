@@ -1,0 +1,17 @@
+name = "http"
+version = "0.1.0"
+license = "Apache-2.0"
+defaultTargets = ["Http", "Spec", "Proofs", "httphead"]
+
+[[lean_lib]]
+name = "Http"
+
+[[lean_lib]]
+name = "Spec"
+
+[[lean_lib]]
+name = "Proofs"
+
+[[lean_exe]]
+name = "httphead"
+root = "Main"
