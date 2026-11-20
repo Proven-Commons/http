@@ -7,9 +7,23 @@ entry_points = ["Main.lean"]
 
 [spec]
 files = ["SPEC.md", "Http/Types.lean", "Http/Spec/Defs.lean", "Http/Spec.lean"]
-code = ["Http.Types", "Http.Framing", "Http"]
+code = [
+  "Http.splitCRLF",
+  "Http.parseDec",
+  "Http.natToDecChars",
+  "Http.parseHex",
+  "Http.natToHexLower",
+  "Http.determineFraming",
+  "Http.normalizedCodings",
+  "Http.lowerBytes",
+  "Http.decodeChunked",
+  "Http.encodeChunked",
+  "Http.serializeFixed",
+  "Http.serializeChunked",
+  "Http.parseRequest",
+]
 
 [tests]
 results = "tests/TEST-RESULTS.md"
-command = ["python3", "tests/run_tests.py"]
-files = ["tests/run_tests.py", "tests/planted_bugs.py", "tests/PLANTED-BUGS.md"]
+command = "python3 tests/run_tests.py"
+files = ["tests/run_tests.py"]

@@ -1,0 +1,28 @@
+{
+  "challenge_module": "Http.Spec",
+  "solution_module": "Http.Proofs",
+  "theorem_names": [
+    "Http.Spec.splitCRLF_sound",
+    "Http.Spec.splitCRLF_prefix_free",
+    "Http.Spec.parseDec_printDec",
+    "Http.Spec.parseHex_printHex",
+    "Http.Spec.determineFraming_disjoint",
+    "Http.Spec.determineFraming_rejects_cl_and_te",
+    "Http.Spec.determineFraming_rejects_http10_te",
+    "Http.Spec.determineFraming_rejects_nonfinal_chunked",
+    "Http.Spec.chunked_requires_http11_without_cl",
+    "Http.Spec.determineFraming_rejects_bad_te",
+    "Http.Spec.decodeChunked_encodeChunked",
+    "Http.Spec.decodeChunked_prefix_free",
+    "Http.Spec.parseRequest_serializeFixed",
+    "Http.Spec.parseRequest_serializeChunked",
+    "Http.Spec.parseRequest_prefix_free",
+    "Http.Spec.parseRequest_stream_unique",
+    "Http.Spec.reject_smuggling_vectors"
+  ],
+  "permitted_axioms": [
+    "propext",
+    "Quot.sound",
+    "Classical.choice"
+  ]
+}
